@@ -4,6 +4,9 @@
 object. The Go kernel owns database credentials, connections, physical schema,
 and deployment synchronization.
 
+Kysely is pinned and materialized in the managed Deno runtime image; package
+source contains only the 80|20 layer.
+
 ## Tables
 
 Place one definition at `tables/<name>.ts`. Its exported identifier must match
