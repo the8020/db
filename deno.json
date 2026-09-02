@@ -19,7 +19,7 @@
     "zod": "npm:zod@4.1.5"
   },
   "tasks": {
-    "check": "deno fmt --check . && deno lint . && deno check --config=deno.local.json mod.ts internal/evaluator.ts programs/database/program.ts",
-    "test": "deno test --config=deno.local.json --allow-read=. ."
+    "check": "deno fmt --check . && deno lint . && deno check --import-map=deno.local.json mod.ts internal/evaluator.ts programs/database/program.ts",
+    "test": "deno test --import-map=deno.local.json --allow-read=. ."
   }
 }
