@@ -58,11 +58,12 @@ One result is bounded by the kernel's configured row and byte limits. Exceeding
 either limit throws instead of returning partial rows. Streaming is deferred;
 paginate large queries.
 
-`@the8020/db` asks the credential-free kernel metadata endpoint once when its
-Worker loads, then selects Kysely's SQLite or PostgreSQL compiler. The custom
-driver forwards compiled SQL and tagged values to the kernel. Transactions are
-real kernel-held database transactions scoped to the current request or job;
-they are rolled back on failed callbacks and execution/Worker cleanup.
+The kernel injects the non-secret backend name before the Worker imports
+`@the8020/db`, which selects Kysely's SQLite or PostgreSQL compiler
+synchronously. The custom driver forwards compiled SQL and tagged values to the
+kernel. Transactions are real kernel-held database transactions scoped to the
+current request or job; they are rolled back on failed callbacks and
+execution/Worker cleanup.
 
 ## Synchronization
 

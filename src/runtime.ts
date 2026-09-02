@@ -19,7 +19,11 @@ import {
   type TransactionSettings,
   type UnknownRow,
 } from "kysely";
-import { kernelInvokeSymbol } from "@the8020/kernel";
+import {
+  type DatabaseBackend,
+  kernelDatabaseBackend,
+  kernelInvokeSymbol,
+} from "@the8020/kernel";
 import type { Database } from "../types.ts";
 import {
   type DatabaseValue,
@@ -34,11 +38,6 @@ import {
   type TableDescriptor,
 } from "./descriptor.ts";
 
-export interface DatabaseInfo {
-  backend: "sqlite" | "postgresql";
-  state: string;
-}
-
 interface ExecuteResult {
   columns: string[];
   rows: DatabaseValue[][];
@@ -47,7 +46,6 @@ interface ExecuteResult {
 }
 
 interface KernelDatabaseAPI {
-  info(): Promise<DatabaseInfo>;
   execute(input: {
     statement: string;
     parameters: DatabaseValue[];
@@ -78,7 +76,6 @@ function invoke<Result>(
 }
 
 const databaseAPI: KernelDatabaseAPI = {
-  info: () => invoke("database.info"),
   execute: (input) => invoke("database.execute", input),
   transaction: {
     begin: (settings) => invoke("database.transaction.begin", { settings }),
@@ -88,12 +85,7 @@ const databaseAPI: KernelDatabaseAPI = {
       invoke("database.transaction.rollback", { transaction }),
   },
 };
-let activeDatabase: Kysely<Database> | undefined;
-
 export function getDatabase(): Kysely<Database> {
-  if (activeDatabase === undefined) {
-    throw new Error("80|20 database runtime is not initialized");
-  }
   return activeDatabase;
 }
 
@@ -220,9 +212,9 @@ class EmptyIntrospector implements DatabaseIntrospector {
 }
 
 class RemoteDialect implements Dialect {
-  readonly #backend: DatabaseInfo["backend"];
+  readonly #backend: DatabaseBackend;
 
-  constructor(backend: DatabaseInfo["backend"]) {
+  constructor(backend: DatabaseBackend) {
     this.#backend = backend;
   }
 
@@ -687,21 +679,9 @@ class PlatformCodecPlugin implements KyselyPlugin {
   }
 }
 
-export async function initializeDatabase(): Promise<Kysely<Database>> {
-  if (activeDatabase !== undefined) return activeDatabase;
-  const info = await databaseAPI.info();
-  if (info.backend !== "sqlite" && info.backend !== "postgresql") {
-    throw new Error(
-      `unsupported database backend ${JSON.stringify(info.backend)}`,
-    );
-  }
-  activeDatabase = createDatabase(info.backend);
-  return activeDatabase;
-}
-
 /** Internal test seam; application code should use the exported singleton. */
 export function createDatabase(
-  backend: DatabaseInfo["backend"],
+  backend: DatabaseBackend,
 ): Kysely<Database> {
   return new Kysely<Database>({
     dialect: new RemoteDialect(backend),
@@ -709,4 +689,5 @@ export function createDatabase(
   });
 }
 
-export const db = await initializeDatabase();
+const activeDatabase = createDatabase(kernelDatabaseBackend());
+export const db = activeDatabase;

@@ -1,14 +1,15 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { kernelInvokeSymbol } from "@the8020/kernel";
+import {
+  kernelDatabaseBackendSymbol,
+  kernelInvokeSymbol,
+} from "@the8020/kernel";
 
+(globalThis as unknown as Record<symbol, unknown>)[
+  kernelDatabaseBackendSymbol
+] = "sqlite";
 (globalThis as unknown as Record<symbol, unknown>)[kernelInvokeSymbol] = (
-  operation: string,
-) =>
-  operation === "database.info"
-    ? Promise.resolve({ backend: "sqlite", state: "READY" })
-    : Promise.reject(
-      new Error("database execution is denied during evaluation"),
-    );
+  _operation: string,
+) => Promise.reject(new Error("database access is denied during evaluation"));
 
 const { default: evaluate } = await import("./evaluator.ts");
 

@@ -23,7 +23,8 @@
 - Table helpers return ordinary Kysely builders after the first call. Direct
   Kysely use remains available through `db`.
 - Runtime database calls use the package-neutral `@the8020/kernel` bridge and
-  never receive backend credentials.
+  never receive backend credentials. The non-secret backend name is injected
+  before module import so compiler selection performs no bootstrap callback.
 - `internal/evaluator.ts` is a bounded job entrypoint, not a discoverable UUI
   program. It imports validated table modules and returns deterministic plain
   descriptors.

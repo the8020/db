@@ -1,8 +1,14 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { kernelInvokeSymbol } from "@the8020/kernel";
+import {
+  kernelDatabaseBackendSymbol,
+  kernelInvokeSymbol,
+} from "@the8020/kernel";
 import type { TableDatabase } from "../mod.ts";
 
 const calls: Array<{ operation: string; input: Record<string, unknown> }> = [];
+(globalThis as unknown as Record<symbol, unknown>)[
+  kernelDatabaseBackendSymbol
+] = "sqlite";
 (globalThis as unknown as Record<symbol, unknown>)[kernelInvokeSymbol] = (
   operation: string,
   input: Record<string, unknown>,
