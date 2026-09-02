@@ -16,16 +16,12 @@
     "@std/assert": "jsr:@std/assert@1.0.14",
     "@the8020/db": "./mod.ts",
     "@the8020/db/types": "./types.ts",
-    "@the8020/kernel": "file:///opt/runtime/kernel/mod.ts",
-    "@the8020/http": "file:///opt/runtime/http/the8020_http.js",
-    "@the8020/protocol": "file:///opt/runtime/protocol.ts",
-    "@packages/the8020/uui/": "file:///workspace/packages/the8020/uui/",
+    "@the8020/kernel": "../kernel/defaults/config/runtime/deno/kernel/mod.ts",
+    "@the8020/http": "../kernel/defaults/config/runtime/deno/http/mod.ts",
+    "@the8020/protocol": "../kernel/defaults/config/runtime/protocol/generated.ts",
+    "@packages/the8020/uui/": "../uui/",
     "hono": "jsr:@hono/hono@4.9.8",
     "kysely": "./vendor/kysely/dist/index.js",
     "zod": "npm:zod@4.1.5"
-  },
-  "tasks": {
-    "check": "deno fmt --check . && deno lint . && deno check --config=deno.local.json mod.ts internal/evaluator.ts programs/database/program.ts",
-    "test": "deno test --config=deno.local.json --allow-read=. ."
   }
 }
