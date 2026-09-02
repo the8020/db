@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "id": "database-table-definitions",
+  "root": {
+    "id": "definitions",
+    "type": "list",
+    "bind": "definitions",
+    "key": "navigation",
+    "display": ["id", "package", "state", "commit", "error"]
+  }
+}

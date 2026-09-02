@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "id": "database-table-detail",
+  "root": {
+    "id": "table",
+    "type": "detail",
+    "controls": [
+      "tableId",
+      "state",
+      "package",
+      "commit",
+      "descriptorHash",
+      "synchronizedAt",
+      "differences",
+      "logical",
+      "current",
+      "physical",
+      "catalog",
+      "confirmDestructive"
+    ]
+  }
+}
