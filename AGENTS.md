@@ -28,8 +28,8 @@
 - `internal/evaluator.ts` is a bounded job entrypoint, not a discoverable UUI
   program. It imports validated table modules and returns deterministic plain
   descriptors.
-- `deno.json` contains deployed runtime mappings. Package-local checks and
-  tests override them with `deno.local.json` as an import map so sibling source
+- `deno.json` contains deployed runtime mappings. Package-local checks and tests
+  override them with `deno.local.json` as an import map so sibling source
   repositories resolve locally without replacing compiler options.
 
 # Work Guidance
