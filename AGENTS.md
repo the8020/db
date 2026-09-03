@@ -1,15 +1,13 @@
 # Purpose
 
 - Provide the package-defined 80|20 database schema DSL, Kysely runtime driver,
-  sandboxed table evaluator, and database administration program.
+  and sandboxed table evaluator.
 - This file is the root contract of the independent `the8020/db` repository.
 
 # Ownership
 
 - Own authored TypeScript table descriptors, logical value codecs, the
   application-facing `@the8020/db` API, and the non-discoverable evaluator job.
-- Own database table administration screens backed only by typed kernel
-  commands.
 - Do not own credentials, connections, physical DDL, schema deployment order,
   package activation, or database readiness; those belong to the Go kernel.
 
@@ -43,6 +41,6 @@
 
 - `deno task check` formats, lints, and type-checks the package.
 - `deno task test` covers descriptors, codecs, typing, helpers, the remote
-  driver, evaluator validation, and administration view models.
+  driver, and evaluator validation.
 
 # Child DOX Index

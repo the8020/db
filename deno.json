@@ -13,13 +13,12 @@
     "@the8020/kernel": "file:///opt/runtime/kernel/mod.ts",
     "@the8020/http": "file:///opt/runtime/http/the8020_http.js",
     "@the8020/protocol": "file:///opt/runtime/protocol.ts",
-    "@packages/the8020/uui/": "file:///workspace/packages/the8020/uui/",
     "hono": "jsr:@hono/hono@4.9.8",
     "kysely": "npm:kysely@0.29.4",
     "zod": "npm:zod@4.1.5"
   },
   "tasks": {
-    "check": "deno fmt --check . && deno lint . && deno check --import-map=deno.local.json mod.ts internal/evaluator.ts programs/database/program.ts",
+    "check": "deno fmt --check . && deno lint . && deno check --import-map=deno.local.json mod.ts internal/evaluator.ts",
     "test": "deno test --import-map=deno.local.json --allow-read=. ."
   }
 }

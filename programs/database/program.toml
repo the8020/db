@@ -1,3 +1,0 @@
-schema = 1
-description = "Manage database tables"
-entrypoint = "program.ts"

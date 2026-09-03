@@ -1,4 +1,4 @@
 schema = 1
-description = "80|20 database tables, Kysely runtime, and administration"
+description = "80|20 database table DSL, Kysely runtime, and evaluator"
 documentation_url = "https://github.com/the8020/db"
 license = "Apache-2.0"
