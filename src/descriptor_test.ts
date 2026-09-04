@@ -40,7 +40,7 @@ const JoinCustomers = table("the8020__example__customers", {
   id: t.text().primaryKey(),
 });
 
-declare module "@the8020/db/types" {
+declare module "/p/the8020/db/types.ts" {
   interface Database extends TableDatabase<typeof TransactionOrders> {}
   interface Database extends TableDatabase<typeof JoinCustomers> {}
 }

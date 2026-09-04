@@ -8,8 +8,7 @@
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1.0.14",
-    "@the8020/db": "./mod.ts",
-    "@the8020/db/types": "./types.ts",
+    "/p/the8020/": "../",
     "@the8020/kernel": "../kernel/defaults/config/runtime/deno/kernel/mod.ts",
     "@the8020/http": "../kernel/defaults/config/runtime/deno/http/mod.ts",
     "@the8020/protocol": "../kernel/defaults/config/runtime/protocol/generated.ts",

@@ -7,8 +7,8 @@
 # Ownership
 
 - Own authored TypeScript table descriptors, logical value codecs,
-  administrative command programs, the application-facing `@the8020/db` API, and
-  the non-discoverable evaluator job.
+  administrative command programs, the application-facing `/p/the8020/db/mod.ts`
+  API, and the non-discoverable evaluator job.
 - Do not own credentials, connections, physical DDL, schema deployment order,
   package activation, or database readiness; those belong to the Go kernel.
 

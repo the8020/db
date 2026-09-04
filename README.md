@@ -1,8 +1,8 @@
 # 80|20 database package
 
-`@the8020/db` defines application tables and exposes a normal Kysely database
-object. The Go kernel owns database credentials, connections, physical schema,
-and deployment synchronization.
+`/p/the8020/db/mod.ts` defines application tables and exposes a normal Kysely
+database object. The Go kernel owns database credentials, connections, physical
+schema, and deployment synchronization.
 
 Kysely is pinned and materialized in the managed Deno runtime image; package
 source contains only the 80|20 layer.
@@ -13,7 +13,7 @@ Place one definition at `tables/<name>.ts`. Its exported identifier must match
 the package path after lower-casing and collapsing non-alphanumeric runs:
 
 ```ts
-import { t, table } from "@the8020/db";
+import { t, table } from "/p/the8020/db/mod.ts";
 
 export default table("acme__orders__orders", {
   id: t.integer().generated().primaryKey(),
@@ -59,7 +59,7 @@ either limit throws instead of returning partial rows. Streaming is deferred;
 paginate large queries.
 
 The kernel injects the non-secret backend name before the Worker imports
-`@the8020/db`, which selects Kysely's SQLite or PostgreSQL compiler
+`/p/the8020/db/mod.ts`, which selects Kysely's SQLite or PostgreSQL compiler
 synchronously. The custom driver forwards compiled SQL and tagged values to the
 kernel. Transactions are real kernel-held database transactions scoped to the
 current request or job; they are rolled back on failed callbacks and

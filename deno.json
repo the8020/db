@@ -8,8 +8,7 @@
   },
   "imports": {
     "@std/assert": "jsr:@std/assert@1.0.14",
-    "@the8020/db": "./mod.ts",
-    "@the8020/db/types": "./types.ts",
+    "/p/": "file:///workspace/packages/",
     "@the8020/kernel": "file:///opt/runtime/kernel/mod.ts",
     "@the8020/http": "file:///opt/runtime/http/the8020_http.js",
     "@the8020/protocol": "file:///opt/runtime/protocol.ts",
