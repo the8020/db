@@ -28,9 +28,9 @@ import type { Database } from "../types.ts";
 import {
   type DatabaseValue,
   decodeDatabaseValue,
+  decodeLogicalValue,
   encodeDatabaseValue,
   logicalValue,
-  scaledToDecimal,
 } from "./values.ts";
 import {
   type ColumnDescriptor,
@@ -576,78 +576,6 @@ function resultCodecs(root: RootOperationNode): ResultCodecs {
     }
   }
   return codecs;
-}
-
-function decodeLogicalValue(value: unknown, column: ColumnDescriptor): unknown {
-  if (value === null) return value;
-  switch (column.logical_type) {
-    case "text":
-    case "enum":
-      if (typeof value !== "string") {
-        throw new TypeError(`invalid ${column.logical_type} result`);
-      }
-      return value;
-    case "boolean":
-      if (typeof value === "boolean") return value;
-      if (value === 0 || value === 0n) return false;
-      if (value === 1 || value === 1n) return true;
-      throw new TypeError("invalid boolean result");
-    case "integer": {
-      const integer = typeof value === "bigint"
-        ? value
-        : typeof value === "number" && Number.isSafeInteger(value)
-        ? BigInt(value)
-        : undefined;
-      if (
-        integer === undefined || integer < BigInt(Number.MIN_SAFE_INTEGER) ||
-        integer > BigInt(Number.MAX_SAFE_INTEGER)
-      ) {
-        throw new RangeError(
-          "integer result exceeds JavaScript safe integer range",
-        );
-      }
-      return Number(integer);
-    }
-    case "float":
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new TypeError("invalid float result");
-      }
-      return value;
-    case "decimal": {
-      const scaled = typeof value === "bigint"
-        ? value
-        : typeof value === "number" && Number.isSafeInteger(value)
-        ? BigInt(value)
-        : undefined;
-      if (scaled === undefined) throw new TypeError("invalid decimal result");
-      return scaledToDecimal(scaled, column.scale ?? 0);
-    }
-    case "datetime": {
-      if (value instanceof Date && Number.isFinite(value.getTime())) {
-        return value;
-      }
-      if (typeof value !== "string") {
-        throw new TypeError("invalid datetime result");
-      }
-      const date = new Date(value);
-      if (!Number.isFinite(date.getTime())) {
-        throw new TypeError("invalid datetime result");
-      }
-      return date;
-    }
-    case "bytes":
-      if (!(value instanceof Uint8Array)) {
-        throw new TypeError("invalid bytes result");
-      }
-      return value;
-    case "json":
-      if (typeof value !== "string") return value;
-      try {
-        return JSON.parse(value);
-      } catch {
-        throw new TypeError("invalid JSON result");
-      }
-  }
 }
 
 class PlatformCodecPlugin implements KyselyPlugin {

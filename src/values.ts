@@ -1,4 +1,4 @@
-import type { LogicalType } from "./descriptor.ts";
+import type { ColumnDescriptor, LogicalType } from "./descriptor.ts";
 
 export interface LogicalValue {
   readonly value: unknown;
@@ -208,5 +208,96 @@ export function decodeDatabaseValue(value: DatabaseValue): unknown {
       return base64ToBytes(value.value);
     case "json":
       return value.value;
+  }
+}
+
+type LogicalColumn = Pick<
+  ColumnDescriptor,
+  "logical_type" | "precision" | "scale"
+>;
+
+/**
+ * Decodes one value returned by the kernel using its authored table-column
+ * definition. This is the descriptor-aware half of the runtime result codec.
+ */
+export function decodeDatabaseColumnValue(
+  value: DatabaseValue,
+  column: LogicalColumn,
+): unknown {
+  return decodeLogicalValue(decodeDatabaseValue(value), column);
+}
+
+export function decodeLogicalValue(
+  value: unknown,
+  column: LogicalColumn,
+): unknown {
+  if (value === null) return value;
+  switch (column.logical_type) {
+    case "text":
+    case "enum":
+      if (typeof value !== "string") {
+        throw new TypeError(`invalid ${column.logical_type} result`);
+      }
+      return value;
+    case "boolean":
+      if (typeof value === "boolean") return value;
+      if (value === 0 || value === 0n) return false;
+      if (value === 1 || value === 1n) return true;
+      throw new TypeError("invalid boolean result");
+    case "integer": {
+      const integer = typeof value === "bigint"
+        ? value
+        : typeof value === "number" && Number.isSafeInteger(value)
+        ? BigInt(value)
+        : undefined;
+      if (
+        integer === undefined || integer < BigInt(Number.MIN_SAFE_INTEGER) ||
+        integer > BigInt(Number.MAX_SAFE_INTEGER)
+      ) {
+        throw new RangeError(
+          "integer result exceeds JavaScript safe integer range",
+        );
+      }
+      return Number(integer);
+    }
+    case "float":
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        throw new TypeError("invalid float result");
+      }
+      return value;
+    case "decimal": {
+      const scaled = typeof value === "bigint"
+        ? value
+        : typeof value === "number" && Number.isSafeInteger(value)
+        ? BigInt(value)
+        : undefined;
+      if (scaled === undefined) throw new TypeError("invalid decimal result");
+      return scaledToDecimal(scaled, column.scale ?? 0);
+    }
+    case "datetime": {
+      if (value instanceof Date && Number.isFinite(value.getTime())) {
+        return value;
+      }
+      if (typeof value !== "string") {
+        throw new TypeError("invalid datetime result");
+      }
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) {
+        throw new TypeError("invalid datetime result");
+      }
+      return date;
+    }
+    case "bytes":
+      if (!(value instanceof Uint8Array)) {
+        throw new TypeError("invalid bytes result");
+      }
+      return value;
+    case "json":
+      if (typeof value !== "string") return value;
+      try {
+        return JSON.parse(value);
+      } catch {
+        throw new TypeError("invalid JSON result");
+      }
   }
 }

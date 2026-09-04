@@ -19,6 +19,8 @@
   matches its normalized path.
 - Logical types are deliberately limited to text, boolean, safe integer, finite
   float, scaled decimal string, datetime, bytes, JSON, and string enum.
+- `codecs.ts` exposes the same descriptor-aware result decoding used by the
+  Kysely runtime to trusted consumers of the raw kernel database API.
 - Table helpers return ordinary Kysely builders after the first call. Direct
   Kysely use remains available through `db`.
 - Runtime database calls use the package-neutral `@the8020/kernel` bridge and

@@ -4,6 +4,7 @@ import {
   base64ToBytes,
   bytesToBase64,
   decimalToScaled,
+  decodeDatabaseColumnValue,
   decodeDatabaseValue,
   encodeDatabaseValue,
   scaledToDecimal,
@@ -43,4 +44,32 @@ Deno.test("integer values are limited to the JavaScript safe range", () => {
   assertSafeInteger(Number.MAX_SAFE_INTEGER);
   assertThrows(() => assertSafeInteger(Number.MAX_SAFE_INTEGER + 1));
   assertThrows(() => encodeDatabaseValue(Number.POSITIVE_INFINITY));
+});
+
+Deno.test("kernel results decode through their authored logical column type", () => {
+  assertEquals(
+    decodeDatabaseColumnValue(1, { logical_type: "boolean" }),
+    true,
+  );
+  assertEquals(
+    decodeDatabaseColumnValue(
+      { type: "bigint", value: "12550" },
+      { logical_type: "decimal", precision: 18, scale: 2 },
+    ),
+    "125.50",
+  );
+  assertEquals(
+    decodeDatabaseColumnValue(
+      { type: "datetime", value: "2026-01-02T03:04:05.000Z" },
+      { logical_type: "datetime" },
+    ),
+    new Date("2026-01-02T03:04:05.000Z"),
+  );
+  assertEquals(
+    decodeDatabaseColumnValue(
+      { type: "json", value: { ready: true } },
+      { logical_type: "json" },
+    ),
+    { ready: true },
+  );
 });
