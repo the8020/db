@@ -1,0 +1,8 @@
+version = 1
+program = "tables-inspect"
+summary = "Inspect a database table"
+usage = "<table-id>"
+mutates_state = false
+restart_behavior = "none"
+[[examples]]
+command = "db.tables.inspect the8020__users__users"

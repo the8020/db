@@ -5,7 +5,6 @@ import type {
   Insertable,
   InsertQueryBuilder,
   InsertResult,
-  Kysely,
   Selectable,
   SelectExpression,
   Selection,
@@ -213,6 +212,28 @@ type AvailableDatabase<ID extends string, Columns extends ColumnMap> =
   & Database
   & LocalDatabase<ID, Columns>;
 
+// The frozen table object receives its precise public Kysely types at the
+// return boundary below. Keep its runtime forwarding deliberately untyped so
+// the compiler does not expand the complete augmented Database union once for
+// every installed table during batch evaluation.
+interface RuntimeDatabase {
+  selectFrom(table: string): {
+    select(selection: readonly string[]): unknown;
+    selectAll(): unknown;
+  };
+  insertInto(table: string): {
+    values(
+      value:
+        | Readonly<Record<string, unknown>>
+        | readonly Readonly<Record<string, unknown>>[],
+    ): unknown;
+  };
+  updateTable(table: string): {
+    set(value: Readonly<Record<string, unknown>>): unknown;
+  };
+  deleteFrom(table: string): unknown;
+}
+
 type QualifiedColumns<ID extends string, Columns extends ColumnMap> = {
   readonly [Name in keyof Columns]: `${ID}.${Extract<Name, string>}`;
 };
@@ -399,8 +420,7 @@ export function table<
     throw new TypeError(`conflicting table definition ${JSON.stringify(id)}`);
   }
   tableRegistry.set(id, descriptor);
-  const local = () =>
-    getDatabase() as unknown as Kysely<AvailableDatabase<ID, Columns>>;
+  const local = () => getDatabase() as unknown as RuntimeDatabase;
   const value: Record<PropertyKey, unknown> = {};
   Object.defineProperty(value, "table", { value: id, enumerable: true });
   Object.defineProperty(value, tableDescriptorSymbol, {
@@ -416,9 +436,7 @@ export function table<
   Object.defineProperties(value, {
     select: {
       value: (selection: readonly string[]) =>
-        (local().selectFrom(id) as unknown as {
-          select(values: readonly string[]): unknown;
-        }).select(selection),
+        local().selectFrom(id).select(selection),
     },
     selectAll: { value: () => local().selectFrom(id).selectAll() },
     insert: {
@@ -426,13 +444,11 @@ export function table<
         values:
           | Readonly<Record<string, unknown>>
           | readonly Readonly<Record<string, unknown>>[],
-      ) => local().insertInto(id).values(values as never),
+      ) => local().insertInto(id).values(values),
     },
     update: {
       value: (values: Readonly<Record<string, unknown>>) =>
-        (local().updateTable(id) as unknown as {
-          set(values: Readonly<Record<string, unknown>>): unknown;
-        }).set(values),
+        local().updateTable(id).set(values),
     },
     delete: { value: () => local().deleteFrom(id) },
   });
@@ -446,8 +462,8 @@ function portableTableId(id: string): boolean {
     parts.length === 3 &&
     parts.every((part) => portableTableComponent.test(part))
   ) return true;
-  return id.length === 63 && id[52] === "_" &&
-    /^[a-z0-9][a-z0-9_]{51}_[a-f0-9]{10}$/.test(id);
+  return id.length === 63 && id[56] === "_" &&
+    /^[a-z0-9][a-z0-9_]{55}_[a-f0-9]{6}$/.test(id);
 }
 
 function shortIdentifier(value: string): string {

@@ -1,0 +1,8 @@
+version = 1
+program = "tables-compare"
+summary = "Compare a table to its activated definition"
+usage = "<table-id>"
+mutates_state = false
+restart_behavior = "none"
+[[examples]]
+command = "db.tables.compare the8020__users__users"

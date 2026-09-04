@@ -1,0 +1,8 @@
+version = 1
+program = "tables-sync"
+summary = "Synchronize one table"
+usage = "<table-id> [--package <package-id>]"
+mutates_state = true
+restart_behavior = "none"
+[[examples]]
+command = "db.tables.sync the8020__users__users"

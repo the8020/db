@@ -81,7 +81,7 @@ Deno.test("table validation rejects ambiguous or nonportable definitions", () =>
 });
 
 Deno.test("table accepts a canonical shortened physical identifier", () => {
-  const id = `${"a".repeat(52)}_0123456789`;
+  const id = `${"a".repeat(56)}_012345`;
   const shortened = table(id, { id: t.text().primaryKey() });
   assertEquals(shortened.table, id);
 });
@@ -130,6 +130,14 @@ Deno.test("table helpers return standard Kysely builders", async () => {
   assertEquals(rows, [{ id: "order-1" }]);
   assertEquals(calls[0]?.operation, "database.execute");
   assertEquals(typeof calls[0]?.input.statement, "string");
+  calls.length = 0;
+  await Orders.insert({ id: "new", customerId: "customer", enabled: true })
+    .execute();
+  assertEquals(calls[0]?.input.return_insert_id, true);
+  calls.length = 0;
+  await Orders.update({ enabled: false }).where(Orders.id, "=", "new")
+    .execute();
+  assertEquals(calls[0]?.input.return_insert_id, undefined);
 });
 
 Deno.test("runtime selects the backend-specific Kysely compiler", async () => {

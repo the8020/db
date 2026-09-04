@@ -1,0 +1,8 @@
+version = 1
+program = "sql"
+summary = "Run SQL against the system database"
+usage = "<statement> [--parameters <json>] [--execute]"
+mutates_state = true
+restart_behavior = "none"
+[[examples]]
+command = "db.sql 'SELECT 1 AS value'"

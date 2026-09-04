@@ -6,8 +6,9 @@
 
 # Ownership
 
-- Own authored TypeScript table descriptors, logical value codecs, the
-  application-facing `@the8020/db` API, and the non-discoverable evaluator job.
+- Own authored TypeScript table descriptors, logical value codecs,
+  administrative command programs, the application-facing `@the8020/db` API, and
+  the non-discoverable evaluator job.
 - Do not own credentials, connections, physical DDL, schema deployment order,
   package activation, or database readiness; those belong to the Go kernel.
 
@@ -23,12 +24,22 @@
 - Runtime database calls use the package-neutral `@the8020/kernel` bridge and
   never receive backend credentials. The non-secret backend name is injected
   before module import so compiler selection performs no bootstrap callback.
+- Kysely dialect compilation and logical-value codecs are shared ownership of
+  this package; kernel transport and engine-native decoding are shared ownership
+  of the kernel database layer. Never add package-program or service-specific
+  SQL workarounds for a discrepancy in either shared contract.
+- The Kysely driver explicitly requests connection insert IDs only for compiled
+  insert queries; other mutations never expose a stale engine-local value.
 - `internal/evaluator.ts` is a bounded job entrypoint, not a discoverable UUI
   program. It imports validated table modules and returns deterministic plain
   descriptors.
 - `deno.json` contains deployed runtime mappings. Package-local checks and tests
   override them with `deno.local.json` as an import map so sibling source
   repositories resolve locally without replacing compiler options.
+- `cbus/commands/**/command.toml` maps visible `db.*` and `db.tables.*` commands
+  to non-discoverable ordinary programs whose default exports parse raw string
+  arguments, report intentional input errors structurally, and use typed kernel
+  database operations.
 
 # Work Guidance
 

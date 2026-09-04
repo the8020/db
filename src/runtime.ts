@@ -50,6 +50,7 @@ interface KernelDatabaseAPI {
     statement: string;
     parameters: DatabaseValue[];
     return_rows: boolean;
+    return_insert_id?: boolean;
     transaction?: string;
   }): Promise<ExecuteResult>;
   transaction: {
@@ -99,6 +100,7 @@ class RemoteConnection implements DatabaseConnection {
         encodeDatabaseValue(value)
       ),
       return_rows: returnsRows(compiled),
+      ...(returnsInsertID(compiled) ? { return_insert_id: true } : {}),
       ...(this.transaction === undefined
         ? {}
         : { transaction: this.transaction }),
@@ -141,6 +143,11 @@ function returnsRows(compiled: CompiledQuery): boolean {
   return query.kind === "SelectQueryNode" || query.kind === "ExplainNode" ||
     query.kind === "RawNode" ||
     query.returning !== undefined || query.output !== undefined;
+}
+
+function returnsInsertID(compiled: CompiledQuery): boolean {
+  return (compiled.query as unknown as { kind?: string }).kind ===
+    "InsertQueryNode";
 }
 
 class RemoteDriver implements Driver {
