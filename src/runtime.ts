@@ -16,6 +16,7 @@ import {
   type RootOperationNode,
   SqliteAdapter,
   SqliteQueryCompiler,
+  type Transaction,
   type TransactionSettings,
   type UnknownRow,
 } from "kysely";
@@ -150,7 +151,14 @@ function returnsInsertID(compiled: CompiledQuery): boolean {
     "InsertQueryNode";
 }
 
+export interface TransactionOptions {
+  timeoutMs?: number;
+  lockTimeoutMs?: number;
+}
+
 class RemoteDriver implements Driver {
+  constructor(private readonly options: TransactionOptions = {}) {}
+
   init(_options?: AbortableOperationOptions): Promise<void> {
     return Promise.resolve();
   }
@@ -170,7 +178,8 @@ class RemoteDriver implements Driver {
       throw new Error("transaction already active");
     }
     remote.transaction =
-      (await databaseAPI.transaction.begin(settings)).transaction;
+      (await databaseAPI.transaction.begin({ ...settings, ...this.options }))
+        .transaction;
   }
 
   async commitTransaction(connection: DatabaseConnection): Promise<void> {
@@ -221,12 +230,15 @@ class EmptyIntrospector implements DatabaseIntrospector {
 class RemoteDialect implements Dialect {
   readonly #backend: DatabaseBackend;
 
-  constructor(backend: DatabaseBackend) {
+  constructor(
+    backend: DatabaseBackend,
+    private readonly options: TransactionOptions = {},
+  ) {
     this.#backend = backend;
   }
 
   createDriver(): Driver {
-    return new RemoteDriver();
+    return new RemoteDriver(this.options);
   }
 
   createQueryCompiler(): SqliteQueryCompiler | PostgresQueryCompiler {
@@ -617,12 +629,26 @@ class PlatformCodecPlugin implements KyselyPlugin {
 /** Internal test seam; application code should use the exported singleton. */
 export function createDatabase(
   backend: DatabaseBackend,
+  options: TransactionOptions = {},
 ): Kysely<Database> {
   return new Kysely<Database>({
-    dialect: new RemoteDialect(backend),
+    dialect: new RemoteDialect(backend, options),
     plugins: [new PlatformCodecPlugin()],
   });
 }
 
 const activeDatabase = createDatabase(kernelDatabaseBackend());
 export const db = activeDatabase;
+
+/** A scoped transaction with bounded connection acquisition, lifetime and locks. */
+export async function transaction<T>(
+  options: TransactionOptions,
+  callback: (tx: Transaction<Database>) => Promise<T>,
+): Promise<T> {
+  const database = createDatabase(kernelDatabaseBackend(), options);
+  try {
+    return await database.transaction().execute(callback);
+  } finally {
+    await database.destroy();
+  }
+}

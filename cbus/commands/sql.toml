@@ -1,4 +1,5 @@
 version = 1
+command = "db.sql"
 program = "sql"
 summary = "Run SQL against the system database"
 usage = "<statement> [--parameters <json>] [--execute]"

@@ -1,4 +1,5 @@
 version = 1
+command = "db.tables.trim"
 program = "tables-trim"
 summary = "Permanently trim retired database objects"
 usage = "<table-id> [--columns <names>] [--drop-table] --confirm"

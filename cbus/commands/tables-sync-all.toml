@@ -1,4 +1,5 @@
 version = 1
+command = "db.tables.sync-all"
 program = "tables-sync-all"
 summary = "Synchronize all activated tables"
 mutates_state = true

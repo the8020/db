@@ -1,4 +1,5 @@
 version = 1
+command = "db.tables.list"
 program = "tables-list"
 summary = "List database tables"
 mutates_state = false

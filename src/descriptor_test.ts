@@ -260,6 +260,44 @@ Deno.test("transactions use explicit kernel transaction tokens", async () => {
   });
 });
 
+Deno.test("bounded transactions pass limits to the shared kernel owner", async () => {
+  const observed: string[] = [];
+  (globalThis as unknown as Record<symbol, unknown>)[kernelInvokeSymbol] = (
+    operation: string,
+    input: Record<string, unknown>,
+  ) => {
+    observed.push(operation);
+    if (operation === "database.transaction.begin") {
+      assertEquals((input.settings as Record<string, unknown>).timeoutMs, 2000);
+      assertEquals(
+        (input.settings as Record<string, unknown>).lockTimeoutMs,
+        25,
+      );
+      return Promise.resolve({ transaction: "bounded" });
+    }
+    if (operation === "database.transaction.commit") return Promise.resolve();
+    if (operation === "database.execute") {
+      assertEquals(input.transaction, "bounded");
+      return Promise.resolve({
+        columns: [],
+        rows: [],
+        affected_rows: { type: "bigint", value: "1" },
+      });
+    }
+    return Promise.reject(new Error(operation));
+  };
+  const { transaction } = await import("../mod.ts");
+  await transaction({ timeoutMs: 2000, lockTimeoutMs: 25 }, async (tx) => {
+    await tx.insertInto(TransactionOrders.table).values({ id: "bounded" })
+      .execute();
+  });
+  assertEquals(observed, [
+    "database.transaction.begin",
+    "database.execute",
+    "database.transaction.commit",
+  ]);
+});
+
 Deno.test("failed transaction callbacks explicitly roll back", async () => {
   const operations: string[] = [];
   (globalThis as unknown as Record<symbol, unknown>)[kernelInvokeSymbol] = (

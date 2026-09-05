@@ -17,7 +17,7 @@ export {
   type TableObject,
   type TableOptions,
 } from "./src/descriptor.ts";
-export { db } from "./src/runtime.ts";
+export { db, transaction, type TransactionOptions } from "./src/runtime.ts";
 export type { Database } from "./types.ts";
 export type {
   ColumnType,
