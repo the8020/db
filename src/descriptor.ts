@@ -14,73 +14,41 @@ import type {
   UpdateResult,
 } from "kysely";
 import type { Database } from "../types.ts";
+import type {
+  ColumnDescriptor,
+  DefaultDescriptor,
+  IndexDescriptor,
+  JSONValue,
+  LogicalType,
+  TableDescriptor,
+} from "./schema.ts";
+export type {
+  ColumnDescriptor,
+  DefaultDescriptor,
+  IndexDescriptor,
+  JSONValue,
+  LogicalType,
+  ReferenceDescriptor,
+  TableDescriptor,
+} from "./schema.ts";
+import {
+  fieldMetadata,
+  fieldSchemas,
+  type FieldStorage,
+  z,
+} from "../fields.ts";
 import { getDatabase } from "./runtime.ts";
 import {
   assertDecimal,
+  assertDecimalDefinition,
   assertFiniteFloat,
   assertSafeInteger,
   bytesToBase64,
+  normalizedEnumValues,
 } from "./values.ts";
 
 export const tableDescriptorSymbol = Symbol.for("the8020.db.table-descriptor");
 declare const tableTypesSymbol: unique symbol;
-
-export type LogicalType =
-  | "text"
-  | "boolean"
-  | "integer"
-  | "float"
-  | "decimal"
-  | "datetime"
-  | "bytes"
-  | "json"
-  | "enum";
-
-export type JSONValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JSONValue[]
-  | { [key: string]: JSONValue };
-
-export interface DefaultDescriptor {
-  kind: "literal" | "now";
-  value?: JSONValue;
-}
-
-export interface ReferenceDescriptor {
-  table: string;
-  column: string;
-}
-
-export interface ColumnDescriptor {
-  name: string;
-  logical_type: LogicalType;
-  precision?: number;
-  scale?: number;
-  enum_values?: string[];
-  nullable: boolean;
-  default?: DefaultDescriptor;
-  generated: boolean;
-  primary_key: boolean;
-  unique: boolean;
-  reference?: ReferenceDescriptor;
-}
-
-export interface IndexDescriptor {
-  name: string;
-  columns: string[];
-  unique: boolean;
-}
-
-export interface TableDescriptor {
-  format_version: 1;
-  table_id: string;
-  columns: ColumnDescriptor[];
-  primary_key: string[];
-  indexes: IndexDescriptor[];
-}
 
 interface ColumnState {
   logicalType: LogicalType;
@@ -310,10 +278,22 @@ const reservedColumns = new Set([
 ]);
 const tableRegistry = new Map<string, TableDescriptor>();
 
+export function columns<Shape extends z.ZodRawShape>(
+  definitions: z.ZodObject<Shape>,
+): { [Name in keyof Shape]: ColumnDefinition<z.output<Shape[Name]>> };
 export function columns<const Columns extends ColumnMap>(
   definitions: Columns,
-): Columns {
-  return definitions;
+): Columns;
+export function columns(
+  definitions: ColumnMap | z.ZodObject<z.ZodRawShape>,
+): ColumnMap {
+  if (!(definitions instanceof z.ZodObject)) return definitions;
+  return Object.fromEntries(
+    Object.entries(definitions.shape).map(([name, schema]) => [
+      name,
+      columnFromSchema(schema as z.ZodType),
+    ]),
+  );
 }
 
 export function table<
@@ -511,19 +491,13 @@ function newColumn<Select>(
 }
 
 export const t = Object.freeze({
+  from: columnFromSchema,
   text: () => newColumn<string>("text"),
   boolean: () => newColumn<boolean>("boolean"),
   integer: () => newColumn<number>("integer"),
   float: () => newColumn<number>("float"),
   decimal: (precision: number, scale: number) => {
-    if (
-      !Number.isSafeInteger(precision) || precision < 1 || precision > 18 ||
-      !Number.isSafeInteger(scale) || scale < 0 || scale > precision
-    ) {
-      throw new TypeError(
-        "decimal precision must be 1..18 and scale 0..precision",
-      );
-    }
+    assertDecimalDefinition(precision, scale);
     return newColumn<string>("decimal", { precision, scale });
   },
   datetime: () => newColumn<Date>("datetime"),
@@ -532,17 +506,84 @@ export const t = Object.freeze({
   enum: <const Values extends readonly [string, ...string[]]>(
     values: Values,
   ) => {
-    if (
-      values.length === 0 || values.some((value) => value.length === 0) ||
-      new Set(values).size !== values.length
-    ) {
-      throw new TypeError("enum values must be non-empty and unique");
-    }
     return newColumn<Values[number]>("enum", {
-      enumValues: [...values].sort(),
+      enumValues: normalizedEnumValues(values),
     });
   },
 });
+
+/** SQL storage for an ordinary Zod field; keys and defaults stay table-local. */
+function columnFromSchema<Schema extends z.ZodType>(
+  schema: Schema,
+  storage?: ColumnDefinition<z.output<Schema>>,
+): ColumnDefinition<z.output<Schema>> {
+  const chain = fieldSchemas(schema);
+  if (
+    chain.some((item) =>
+      item instanceof z.ZodOptional || item instanceof z.ZodDefault ||
+      item instanceof z.ZodCatch
+    )
+  ) {
+    throw new TypeError(
+      "SQL fields cannot be optional or have Zod defaults; use nullable() or a column default() explicitly",
+    );
+  }
+  const declared = fieldMetadata(schema)?.storage;
+  const primitive = chain.at(-1)!;
+  let column: AnyColumn;
+  if (declared !== undefined) {
+    column = columnFromStorage(declared);
+    if (storage !== undefined) {
+      const expected = column.descriptor("field");
+      const actual = storage.descriptor("field");
+      if (
+        expected.logical_type !== actual.logical_type ||
+        expected.precision !== actual.precision ||
+        expected.scale !== actual.scale ||
+        JSON.stringify(expected.enum_values) !==
+          JSON.stringify(actual.enum_values)
+      ) {
+        throw new TypeError(
+          "Column storage must match the field's declared storage type",
+        );
+      }
+      column = storage;
+    }
+  } else if (storage !== undefined) column = storage;
+  else if (primitive.type === "string") column = t.text();
+  else if (primitive instanceof z.ZodBoolean) column = t.boolean();
+  else if (
+    primitive instanceof z.ZodNumber || primitive instanceof z.ZodNumberFormat
+  ) {
+    column = primitive.isInt ? t.integer() : t.float();
+  } else if (primitive instanceof z.ZodDate) column = t.datetime();
+  else if (
+    primitive instanceof z.ZodEnum &&
+    primitive.options.every((value) => typeof value === "string")
+  ) {
+    column = t.enum(primitive.options as [string, ...string[]]);
+  } else {
+    throw new TypeError(
+      "This Zod field needs explicit SQL storage; declare field(schema, { storage: ... }) at its definition",
+    );
+  }
+  return (chain.some((item) => item instanceof z.ZodNullable)
+    ? column.nullable()
+    : column) as ColumnDefinition<z.output<Schema>>;
+}
+
+function columnFromStorage(storage: FieldStorage): AnyColumn {
+  switch (storage.type) {
+    case "decimal":
+      return t.decimal(storage.precision, storage.scale);
+    case "enum":
+      return t.enum(storage.values);
+    case "json":
+      return t.json();
+    default:
+      return t[storage.type]();
+  }
+}
 
 function literalDefault(state: ColumnState, value: unknown): DefaultDescriptor {
   switch (state.logicalType) {

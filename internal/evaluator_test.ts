@@ -33,6 +33,18 @@ Deno.test("evaluator returns deterministic descriptors for a batch", async () =>
     "the8020__db__sample_table",
   );
   assertEquals(first.tables[0]?.descriptor_hash.length, 64);
+  assertEquals(
+    first.tables[0]?.descriptor.columns.slice(2).map((column) => ({
+      name: column.name,
+      type: column.logical_type,
+      precision: column.precision,
+      scale: column.scale,
+    })),
+    [
+      { name: "amount", type: "decimal", precision: 18, scale: 2 },
+      { name: "quantity", type: "decimal", precision: 12, scale: 3 },
+    ],
+  );
 });
 
 Deno.test("evaluator validates expected filesystem identity", async () => {

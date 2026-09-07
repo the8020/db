@@ -4,6 +4,8 @@ import {
   kernelInvokeSymbol,
 } from "@the8020/kernel";
 import type { TableDatabase } from "../mod.ts";
+import { decimal, field, money, z } from "../fields.ts";
+import type { Row, Selectable } from "../mod.ts";
 
 const calls: Array<{ operation: string; input: Record<string, unknown> }> = [];
 (globalThis as unknown as Record<symbol, unknown>)[
@@ -78,6 +80,162 @@ Deno.test("table validation rejects ambiguous or nonportable definitions", () =>
   );
   assertThrows(() => t.decimal(19, 2));
   assertThrows(() => t.enum(["same", "same"]));
+});
+
+Deno.test("Zod fields and structures supply SQL columns with unchanged descriptors", () => {
+  const owner = field(z.string().min(1), {
+    label: "Owner",
+    valueHelp: () => {
+      throw new Error("schema evaluation must not call help");
+    },
+  });
+  const summary = z.object({
+    owner,
+    enabled: z.boolean(),
+    attempts: z.number().int().nonnegative(),
+    ratio: z.number(),
+    state: z.enum(["ready", "paused"]),
+    updatedAt: z.date().nullable(),
+  });
+  const definitions = {
+    ...columns(summary),
+    owner: t.from(owner).primaryKey(),
+    enabled: t.from(summary.shape.enabled).default(true),
+  };
+  const Shared = table("the8020__example__shared_fields", definitions);
+  const Explicit = table("the8020__example__explicit_fields", {
+    owner: t.text().primaryKey(),
+    enabled: t.boolean().default(true),
+    attempts: t.integer(),
+    ratio: t.float(),
+    state: t.enum(["ready", "paused"]),
+    updatedAt: t.datetime().nullable(),
+  });
+  assertEquals(descriptorOf(Shared).columns, descriptorOf(Explicit).columns);
+  const row: Selectable<Row<typeof Shared>> = {
+    owner: "alice",
+    enabled: true,
+    attempts: 1,
+    ratio: 0.5,
+    state: "ready",
+    updatedAt: null,
+  };
+  const typed: z.infer<typeof summary> = row;
+  assertEquals(summary.parse(typed), row);
+  // These compile-time checks build invalid inputs intentionally, without running them.
+  // deno-lint-ignore no-constant-condition
+  if (false) {
+    Shared.insert({ ...row, enabled: undefined });
+    // @ts-expect-error enum membership is preserved in Kysely inputs
+    Shared.insert({ ...row, state: "other" });
+    // @ts-expect-error a generated structure retains its numeric type
+    Shared.update({ attempts: "1" });
+    // @ts-expect-error explicit SQL storage must agree with the Zod value type
+    t.from(z.string(), t.integer());
+  }
+});
+
+Deno.test("formatted Zod fields retain primitive storage and Kysely query types", async () => {
+  calls.length = 0;
+  const email = field(z.email(), { label: "Email address" });
+  const contact = z.object({
+    email,
+    website: z.url().nullable(),
+    reference: z.uuid().readonly(),
+    attempts: z.int(),
+    ratio: z.float64(),
+  });
+  const Contacts = table(
+    "the8020__example__formatted_fields",
+    columns(contact),
+  );
+  const Explicit = table("the8020__example__formatted_storage", {
+    email: t.text(),
+    website: t.text().nullable(),
+    reference: t.text(),
+    attempts: t.integer(),
+    ratio: t.float(),
+  });
+  assertEquals(descriptorOf(Contacts).columns, descriptorOf(Explicit).columns);
+  assertEquals(email.safeParse("invalid").success, false);
+  const row: Selectable<Row<typeof Contacts>> = contact.parse({
+    email: "alice@example.com",
+    website: null,
+    reference: "550e8400-e29b-41d4-a716-446655440000",
+    attempts: 2,
+    ratio: 0.5,
+  });
+  await Contacts.insert(row).execute();
+  assertEquals(calls[0]?.input.parameters, Object.values(row));
+  await Contacts.selectAll().where(Contacts.email, "=", row.email)
+    .where(Contacts.attempts, ">", 1).execute();
+  assertEquals(calls[1]?.input.parameters, [row.email, 1]);
+});
+
+Deno.test("SQL inference leaves ambiguous storage and defaults explicit", () => {
+  assertEquals(
+    t.from(z.string(), t.decimal(18, 2)).descriptor("total").logical_type,
+    "decimal",
+  );
+  const json = z.object({ source: z.string() });
+  assertEquals(
+    t.from(json, t.json<z.infer<typeof json>>()).descriptor("metadata")
+      .logical_type,
+    "json",
+  );
+  assertThrows(() => t.from(z.string().optional()), TypeError, "SQL fields");
+  assertThrows(() => t.from(z.string().default("")), TypeError, "SQL fields");
+  assertThrows(() => t.from(z.string().catch("")), TypeError, "SQL fields");
+  assertThrows(() => t.from(json), TypeError, "explicit SQL storage");
+  assertThrows(
+    () => t.from(z.string().transform((value) => Number(value))),
+    TypeError,
+    "explicit SQL storage",
+  );
+});
+
+Deno.test("declared field storage is preserved by table includes and rejects retyping", () => {
+  const amount = money(18, 2).refine((value) => !value.startsWith("-"));
+  const details = field(z.object({ source: z.string() }), {
+    storage: { type: "json" },
+  });
+  const invoice = z.object({ amount, quantity: decimal(12, 3), details });
+  const Invoices = table("the8020__example__invoices", {
+    ...columns(invoice),
+    amount: t.from(field(amount, { label: "Total" })).default("0.00"),
+    discount: t.from(amount.nullable()),
+  });
+  assertEquals(
+    descriptorOf(Invoices).columns.map((column) => [
+      column.name,
+      column.logical_type,
+      column.precision,
+      column.scale,
+      column.nullable,
+    ]),
+    [
+      ["amount", "decimal", 18, 2, false],
+      ["quantity", "decimal", 12, 3, false],
+      ["details", "json", undefined, undefined, false],
+      ["discount", "decimal", 18, 2, true],
+    ],
+  );
+  const row: Selectable<Row<typeof Invoices>> = {
+    amount: "1.25",
+    quantity: "2.500",
+    details: { source: "test" },
+    discount: null,
+  };
+  assertEquals(invoice.parse(row).amount, "1.25");
+  assertThrows(() => t.from(amount, t.text()), TypeError, "must match");
+  assertThrows(() => t.from(amount, t.decimal(12, 2)), TypeError, "must match");
+  assertThrows(() => t.from(amount, t.decimal(18, 3)), TypeError, "must match");
+  assertThrows(
+    () => t.from(amount.transform(Number)),
+    TypeError,
+    "explicit SQL storage",
+  );
+  assertEquals(t.from(amount, t.decimal(18, 2)).descriptor("amount").scale, 2);
 });
 
 Deno.test("table accepts a canonical shortened physical identifier", () => {
@@ -156,7 +314,7 @@ Deno.test("logical values use tagged parameters and typed direct results", async
   const Typed = table("the8020__example__typed", {
     id: t.text().primaryKey(),
     enabled: t.boolean(),
-    total: t.decimal(18, 2),
+    ...columns(z.object({ total: money() })),
     createdAt: t.datetime(),
     payload: t.bytes(),
     metadata: t.json<{ source: string }>(),

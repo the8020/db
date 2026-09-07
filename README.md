@@ -37,6 +37,104 @@ Composite primary keys and logical references are supported. Phase one does not
 create physical foreign keys. `generated()` is limited to one integer primary
 key.
 
+## Reusable fields and structures
+
+A field is an ordinary Zod schema with reusable meaning. A structure is an
+ordinary Zod object. Define them in the package that owns that meaning, commonly
+in `types/`; import them directly wherever needed.
+
+```ts
+import { field, z } from "/p/the8020/db/fields.ts";
+
+export const owner = field(z.string(), {
+  label: "Owner",
+  description: "The person responsible for this work.",
+});
+export const assignment = z.object({ owner, enabled: z.boolean() });
+```
+
+The same schema works in a form, as `assignment.array()` in a list, and as table
+columns:
+
+```ts
+import { columns, t, table } from "/p/the8020/db/mod.ts";
+import { assignment, owner } from "../types/assignment.ts";
+
+export default table("acme__work__assignments", {
+  ...columns(assignment),
+  owner: t.from(owner).primaryKey(),
+  enabled: t.from(assignment.shape.enabled).default(true),
+});
+```
+
+`t.from()` and `columns()` preserve a field's declared storage. Without a
+storage declaration they infer common primitives: strings (including email/URL/
+UUID formats), booleans, integer/float numbers, dates, string enums, and
+nullable wrappers.
+
+Exact decimals and monetary amounts define their validation and storage once:
+
+```ts
+import { decimal, field, money, z } from "/p/the8020/db/fields.ts";
+import { columns, t, table } from "/p/the8020/db/mod.ts";
+
+export const unitPrice = field(money(), { label: "Unit price" });
+export const line = z.object({
+  quantity: decimal(12, 3),
+  unitPrice,
+});
+
+export default table("acme__orders__lines", {
+  id: t.integer().generated().primaryKey(),
+  ...columns(line),
+});
+```
+
+`decimal(precision, scale)` and `money(precision = 18, scale = 2)` are ordinary
+Zod string schemas. They validate exact canonical values such as `"125.50"`
+using the database codec; they never round or convert through floating point.
+Money represents an amount, with currency in a separate field when needed.
+Precision is 1–18 and scale is 0–precision. Nullable wrappers, `.refine()`,
+clones, field customization, and structure composition retain the storage type.
+UUI preserves exact strings in forms/help and compares decimal list values
+without losing precision.
+
+Custom fields use the same storage contract, for example:
+
+```ts
+export const metadata = field(z.object({ source: z.string() }), {
+  storage: { type: "json" },
+});
+// A table can include this field with t.from(metadata) or columns(structure).
+```
+
+Storage is a typed, immutable part of the field definition. A conflicting field
+or column override fails instead of silently turning money into text or changing
+its precision. A transform that replaces the schema requires storage to be
+declared on its resulting field; the adapter does not guess across transforms.
+The explicit `t.from(schema, storage)` form remains available for unannotated
+schemas, but reusable fields should declare their representation at the source.
+
+SQL defaults, keys, and generation belong to each table. Zod optional/default/
+catch wrappers do not define SQL defaults: adapt the underlying field and choose
+`default()` or `nullable()` explicitly. Zod refinements validate application
+values; they do not become database constraints or run automatically on Kysely
+queries. The database codec still enforces the selected logical storage type.
+
+Field metadata accepts `label`, a Markdown `description`,
+`valueHelp({ query, offset, limit })`, and `open(value)`. Value help returns
+`{ items: [{ value, label, description? }], more }`; query and paginate at the
+source instead of loading all possible values. Callbacks run only when a
+consumer invokes them. Keep their imports lazy when they need database or UUI
+code, so table evaluation remains free of queries and UI initialization. The
+users package's `types/user.ts` provides a concrete example.
+
+`field()` returns a fresh schema, so local names and help can be overridden
+without changing other uses. Nullable, optional, default, catch, and read-only
+wrappers preserve meaning. Define validation before attaching metadata, as with
+Zod's own metadata API. UUI adds presentation options through its existing
+`field()` helper; these remain separate from the database descriptor.
+
 ## Queries
 
 Table helpers only provide the first Kysely call:

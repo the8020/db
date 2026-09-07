@@ -18,6 +18,17 @@ export {
   type TableOptions,
 } from "./src/descriptor.ts";
 export { db, transaction, type TransactionOptions } from "./src/runtime.ts";
+export {
+  decimal,
+  field,
+  type FieldMetadata,
+  type FieldStorage,
+  money,
+  type ValueHelpItem,
+  type ValueHelpPage,
+  type ValueHelpRequest,
+  z,
+} from "./fields.ts";
 export type { Database } from "./types.ts";
 export type {
   ColumnType,

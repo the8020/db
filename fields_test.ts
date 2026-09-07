@@ -1,0 +1,136 @@
+import {
+  assertEquals,
+  assertNotEquals,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
+import { decimal, field, fieldMetadata, money, z } from "./fields.ts";
+
+Deno.test("decimal and money fields validate exact values with shared storage", () => {
+  const amount = money();
+  for (const value of ["0.00", "125.50", "-125.50", "9999999999999999.99"]) {
+    assertEquals(amount.parse(value), value);
+  }
+  for (
+    const value of [
+      125.50,
+      "125.5",
+      "125.500",
+      "1e2",
+      "01.00",
+      "-0.00",
+      "10000000000000000.00",
+    ]
+  ) {
+    assertEquals(amount.safeParse(value).success, false, String(value));
+  }
+  assertEquals(decimal(4, 3).parse("1.250"), "1.250");
+  assertEquals(decimal(4, 0).parse("1250"), "1250");
+  assertEquals(money(4, 3).parse("1.250"), "1.250");
+  assertThrows(() => decimal(19, 2), TypeError, "precision");
+  assertThrows(() => decimal(2, 3), TypeError, "scale");
+});
+
+Deno.test("field storage survives refinement, wrappers, and structure composition", () => {
+  const amount = money(16, 2).refine((value) => value !== "0.00");
+  const structure = z.object({ amount }).pick({ amount: true }).extend({
+    discount: field(amount.nullable().readonly(), { label: "Discount" }),
+  });
+  for (
+    const schema of [
+      amount,
+      amount.clone(),
+      structure.shape.amount,
+      structure.shape.discount,
+    ]
+  ) {
+    assertEquals(fieldMetadata(schema)?.storage, {
+      type: "decimal",
+      precision: 16,
+      scale: 2,
+    });
+  }
+  assertEquals(structure.shape.amount.safeParse("0.00").success, false);
+  assertEquals(structure.shape.discount.parse(null), null);
+  assertThrows(
+    () => field(amount, { storage: { type: "text" } }),
+    TypeError,
+    "storage type",
+  );
+  assertThrows(
+    () =>
+      field(amount, { storage: { type: "decimal", precision: 18, scale: 2 } }),
+    TypeError,
+    "storage type",
+  );
+  assertEquals(fieldMetadata(amount.transform(Number))?.storage, undefined);
+  // deno-lint-ignore no-constant-condition
+  if (false) {
+    field(z.number(), {
+      // @ts-expect-error a numeric Zod value cannot use decimal-string storage
+      storage: { type: "decimal", precision: 18, scale: 2 },
+    });
+    // @ts-expect-error a string field cannot use integer storage
+    field(z.string(), { storage: { type: "integer" } });
+  }
+});
+
+Deno.test("semantic fields retain validation and customize each use independently", async () => {
+  const valueHelp = () => ({
+    items: [{ value: "alice", label: "Alice" }],
+    more: false,
+  });
+  const opened: string[] = [];
+  const user = field(z.string().min(1), {
+    label: "User",
+    description: "Choose the **account** responsible for this work.",
+    valueHelp,
+    open: (value) => {
+      opened.push(value);
+    },
+  });
+  const owner = field(user, { label: "Owner" });
+  assertNotEquals(user, owner);
+  assertEquals(user.safeParse("").success, false);
+  assertEquals(owner.parse("alice"), "alice");
+  assertEquals(fieldMetadata(user)?.label, "User");
+  assertEquals(fieldMetadata(owner)?.label, "Owner");
+  assertStrictEquals(fieldMetadata(owner)?.valueHelp, valueHelp);
+  await fieldMetadata(owner)?.open?.("alice");
+  assertEquals(opened, ["alice"]);
+  assertEquals(
+    await fieldMetadata(owner)?.valueHelp?.({
+      query: "ali",
+      offset: 0,
+      limit: 20,
+    }),
+    { items: [{ value: "alice", label: "Alice" }], more: false },
+  );
+});
+
+Deno.test("ordinary Zod structures preserve fields through includes and wrappers", () => {
+  const user = field(z.string(), { label: "User", description: "An account." });
+  const assignment = z.object({ owner: user, enabled: z.boolean() });
+  const form = assignment.extend({ reviewer: user.nullable().optional() });
+  assertEquals<unknown>(
+    fieldMetadata(form.shape.reviewer),
+    fieldMetadata(user),
+  );
+  assertEquals(fieldMetadata(assignment.partial().shape.owner)?.label, "User");
+  assertEquals(
+    fieldMetadata(
+      field(form.shape.reviewer, { description: "A second reader." }),
+    ),
+    { label: "User", description: "A second reader." },
+  );
+  assertEquals(fieldMetadata(user)?.description, "An account.");
+  assertEquals(assignment.pick({ owner: true }).parse({ owner: "alice" }), {
+    owner: "alice",
+  });
+  assertEquals(
+    fieldMetadata(
+      z.string().meta({ title: "Name", description: "Full name." }),
+    ),
+    { label: "Name", description: "Full name." },
+  );
+});

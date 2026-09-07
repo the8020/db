@@ -104,6 +104,13 @@ Default section order:
 When the user requests a durable behavior change, record it here or in the
 relevant child AGENTS.md
 
+- Keep Kysely as the database query API, with its ordinary builders and types.
+  Zod integration is an optional adapter into the existing table definitions; it
+  must not replace Kysely or introduce a competing query language.
+- Shared fields must carry their value representation into database structures
+  without repeated storage declarations. Keep the type system systematic and
+  small; custom types use the same field contract as built-in helpers.
+
 ## Child DOX Index
 
 This root retains repository-wide contracts and files outside the child scopes
@@ -117,11 +124,13 @@ below.
   administrative programs for the command bus.
 - [src/AGENTS.md](src/AGENTS.md): Own table descriptors, logical codecs, the
   Kysely driver, and database command helpers.
+- [types/AGENTS.md](types/AGENTS.md): Share database table references for
+  searchable lookup and linked administration.
 
 # Purpose
 
 - Provide the package-defined 80|20 database schema DSL, Kysely runtime driver,
-  and sandboxed table evaluator.
+  shared semantic Zod fields, and sandboxed table evaluator.
 - This file is the root contract of the independent `the8020/db` repository.
 
 # Ownership
@@ -139,6 +148,31 @@ below.
   matches its normalized path.
 - Logical types are deliberately limited to text, boolean, safe integer, finite
   float, scaled decimal string, datetime, bytes, JSON, and string enum.
+- `fields.ts` is the runtime-independent semantic field API.
+  `field(schema,
+  metadata)` returns an independent ordinary Zod schema with a
+  label, Markdown description, optional paged value-help callback, and optional
+  entity-opening callback. Callbacks stay in the Worker and never enter database
+  descriptors. Apply validation constraints before attaching field metadata;
+  optional, nullable, default, catch, and read-only wrappers preserve it.
+- Optional `storage` metadata defines a field's SQL value representation once,
+  checked against its Zod output type. It is immutable data on the cloned Zod
+  definition, retained by refinements, clones, field customization, wrappers,
+  and structure composition. Presentation metadata keeps Zod registry semantics.
+  Transforms that replace a schema require a new explicit storage declaration.
+- `decimal(precision, scale)` and `money(precision = 18, scale = 2)` return
+  ordinary Zod string schemas using the same exact-decimal validator and limits
+  as the SQL codec. Money is an amount; currency stays application-owned.
+- Structures are ordinary `z.object()` schemas composed through `.shape`,
+  `.pick()`, `.extend()`, and `.array()`; there is no structure registry or
+  required file location.
+- `t.from(schema)` infers common SQL logical types. `columns(structure)` adapts
+  a Zod object for table includes. Keys, SQL defaults, and generation remain
+  explicit column operations. Declared field storage takes precedence over
+  primitive inference; contradictory per-column overrides fail. Zod
+  optional/default/catch wrappers require an explicit SQL decision. Ambiguous
+  representations require `storage` at the field definition. Validation
+  refinements remain Zod rules, not DDL.
 - `codecs.ts` exposes the same descriptor-aware result decoding used by the
   Kysely runtime to trusted consumers of the raw kernel database API.
 - Table helpers return ordinary Kysely builders after the first call. Direct
@@ -169,6 +203,15 @@ below.
 
 # Work Guidance
 
+- Reuse ordinary Zod and Kysely composition before adding a database concept.
+  A necessary extension must work across validation, storage, and UUI
+  consumers without turning one application need into unrelated driver
+  behavior.
+- Keep logical schemas and codecs in this package and physical database
+  authority in the kernel. Change the kernel only for a necessary foundation
+  gap, with regression evidence at the owning boundary and the affected
+  package path.
+
 - Keep the DSL and remote driver small. Prefer Kysely's compiler and builders
   over custom query syntax or expression parsing.
 - Keep rare engine-native/raw expression results explicit rather than adding a
@@ -178,4 +221,4 @@ below.
 
 - `deno task check` formats, lints, and type-checks the package.
 - `deno task test` covers descriptors, codecs, typing, helpers, the remote
-  driver, and evaluator validation.
+  driver, semantic field/structure reuse, and evaluator validation.

@@ -1,4 +1,4 @@
-import type { ColumnDescriptor, LogicalType } from "./descriptor.ts";
+import type { ColumnDescriptor, LogicalType } from "./schema.ts";
 
 export interface LogicalValue {
   readonly value: unknown;
@@ -61,6 +61,31 @@ export function assertDecimal(
   if (scaled < signed64Minimum || scaled > signed64Maximum) {
     throw new RangeError("decimal value exceeds signed 64-bit storage");
   }
+}
+
+export function assertDecimalDefinition(
+  precision: number,
+  scale: number,
+): void {
+  if (
+    !Number.isSafeInteger(precision) || precision < 1 || precision > 18 ||
+    !Number.isSafeInteger(scale) || scale < 0 || scale > precision
+  ) {
+    throw new TypeError(
+      "decimal precision must be 1..18 and scale 0..precision",
+    );
+  }
+}
+
+export function normalizedEnumValues(
+  values: readonly string[],
+): readonly [string, ...string[]] {
+  if (
+    values.length === 0 ||
+    values.some((value) => typeof value !== "string" || !value) ||
+    new Set(values).size !== values.length
+  ) throw new TypeError("enum values must be non-empty and unique");
+  return Object.freeze([...values].sort()) as readonly [string, ...string[]];
 }
 
 export function decimalToScaled(

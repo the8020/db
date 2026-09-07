@@ -17,6 +17,10 @@ Parent DOX: [db DOX](../AGENTS.md).
 
 # Work Guidance
 
+- Reuse the ordinary bounded job runtime for evaluation and keep output
+  deterministic. A new schema need belongs in the shared descriptor contract,
+  not an evaluator-specific runtime or application branch in Go.
+
 # Verification
 
 - From the repository root, run `deno task check` and `deno task test`.
