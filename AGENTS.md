@@ -203,14 +203,13 @@ below.
 
 # Work Guidance
 
-- Reuse ordinary Zod and Kysely composition before adding a database concept.
-  A necessary extension must work across validation, storage, and UUI
-  consumers without turning one application need into unrelated driver
-  behavior.
+- Reuse ordinary Zod and Kysely composition before adding a database concept. A
+  necessary extension must work across validation, storage, and UUI consumers
+  without turning one application need into unrelated driver behavior.
 - Keep logical schemas and codecs in this package and physical database
   authority in the kernel. Change the kernel only for a necessary foundation
-  gap, with regression evidence at the owning boundary and the affected
-  package path.
+  gap, with regression evidence at the owning boundary and the affected package
+  path.
 
 - Keep the DSL and remote driver small. Prefer Kysely's compiler and builders
   over custom query syntax or expression parsing.
