@@ -10,9 +10,9 @@ Parent DOX: [db DOX](../AGENTS.md).
 
 # Local Contracts
 
-- Value help filters the existing kernel table catalog by table/package/module
-  and sends the requested batch only. The catalog API returns a complete
-  snapshot.
+- Value help exposes table ID, package, module, and state fields, with ID first.
+  Apply ordinary list queries before paging the complete kernel catalog
+  snapshot; send only the requested rows.
 - Open calls the public database administration program with the selected ID.
 - Generic table inspection uses deployed metadata and never evaluates sources.
 

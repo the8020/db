@@ -4,21 +4,32 @@ export const tableId: z.ZodString = field(z.string(), {
   label: "Database table",
   description:
     "Choose a table by its name or owning package. Open it to browse rows and inspect its fields.",
-  valueHelp: async ({ query, offset, limit }) => {
+  valueHelp: async (request) => {
     const { kernel } = await import("@the8020/kernel");
-    const search = query.trim().toLowerCase();
-    const matches = (await kernel.database.tables.list()).filter((row) =>
-      `${row.table_id} ${row.source_package} ${row.source_module}`.toLowerCase()
-        .includes(search)
-    ).sort((a, b) => a.table_id.localeCompare(b.table_id));
-    return {
-      items: matches.slice(offset, offset + limit).map((row) => ({
-        value: row.table_id,
-        label: row.table_id,
-        description: `${row.source_package} · ${row.state}`,
-      })),
-      more: offset + limit < matches.length,
-    };
+    const { queryValueHelp } = await import("/p/the8020/uui/lists.ts");
+    const { packageId } = await import("/p/the8020/packages/types/package.ts");
+    const { sourceInfo } = await import("/p/the8020/packages/types/source.ts");
+    const rows = (await kernel.database.tables.list()).sort((a, b) =>
+      a.table_id.localeCompare(b.table_id)
+    ).map((row) => ({
+      tableId: row.table_id,
+      package: row.source_package,
+      module: row.source_module,
+      state: row.state,
+    }));
+    return queryValueHelp(
+      z.object({
+        tableId,
+        package: packageId,
+        module: sourceInfo.shape.path,
+        state: field(z.string(), {
+          label: "Status",
+          description: "The table's current catalog state.",
+        }),
+      }),
+      rows,
+      request,
+    );
   },
   open: async (value) => {
     const { default: database } = await import(

@@ -76,8 +76,10 @@ Deno.test("field storage survives refinement, wrappers, and structure compositio
 });
 
 Deno.test("semantic fields retain validation and customize each use independently", async () => {
+  const schema = z.object({ value: z.string(), label: z.string() });
   const valueHelp = () => ({
-    items: [{ value: "alice", label: "Alice" }],
+    schema,
+    rows: [{ value: "alice", label: "Alice" }],
     more: false,
   });
   const opened: string[] = [];
@@ -100,11 +102,11 @@ Deno.test("semantic fields retain validation and customize each use independentl
   assertEquals(opened, ["alice"]);
   assertEquals(
     await fieldMetadata(owner)?.valueHelp?.({
-      query: "ali",
+      query: { search: "ali", filters: {}, sort: null },
       offset: 0,
       limit: 20,
     }),
-    { items: [{ value: "alice", label: "Alice" }], more: false },
+    valueHelp(),
   );
 });
 

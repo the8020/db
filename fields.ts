@@ -40,8 +40,14 @@ export type FieldStorage<Value = unknown> = unknown extends Value ? Storage : {
 // Presentation metadata intentionally follows Zod's ordinary registry semantics.
 const storageSymbol = Symbol.for("the8020.db.field-storage");
 
+export interface ListQuery {
+  search: string;
+  filters: Record<string, string>;
+  sort: { column: string; direction: "asc" | "desc" } | null;
+}
+
 export interface ValueHelpRequest {
-  query: string;
+  query: ListQuery;
   offset: number;
   limit: number;
 }
@@ -52,9 +58,13 @@ export interface ValueHelpItem<Value> {
   description?: string;
 }
 
-export interface ValueHelpPage<Value> {
-  items: ValueHelpItem<Value>[];
+export interface ValueHelpPage {
+  /** Ordinary fields in display order. The first field supplies the selected value. */
+  schema: z.ZodObject;
+  rows: Record<string, unknown>[];
   more: boolean;
+  totalItems?: number;
+  totalSourceItems?: number;
 }
 
 /** Meaning shared by forms, lists, and other consumers of a Zod field. */
@@ -64,11 +74,14 @@ export interface FieldMetadata<Value = unknown> {
   description?: string;
   valueHelp?(
     request: ValueHelpRequest,
-  ): ValueHelpPage<Value> | Promise<ValueHelpPage<Value>>;
+  ): ValueHelpPage | Promise<ValueHelpPage>;
   open?(value: Value): void | Promise<void>;
 }
 
-const metadata = z.registry<FieldMetadata>();
+// Callback schemas are opaque metadata, not Zod input/output placeholders.
+const metadata = z.registry<
+  Omit<FieldMetadata, "valueHelp"> & { valueHelp?: unknown }
+>();
 
 /** Return an independent schema; customizing a use never changes its source. */
 export function field<T extends z.ZodType>(

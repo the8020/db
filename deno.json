@@ -23,7 +23,7 @@
     "@the8020/context": "file:///opt/runtime/context/mod.ts"
   },
   "tasks": {
-    "check": "deno fmt --check . && deno lint . && deno check --import-map=deno.local.json mod.ts codecs.ts types/*.ts internal/evaluator.ts src/*.ts programs/*/*.ts",
+    "check": "deno fmt --check . && deno lint . && deno check --import-map=deno.local.json mod.ts codecs.ts lookup.ts types/*.ts internal/evaluator.ts src/*.ts programs/*/*.ts",
     "test": "deno test --import-map=deno.local.json --allow-read=. ."
   }
 }

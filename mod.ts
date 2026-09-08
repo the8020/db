@@ -23,6 +23,7 @@ export {
   field,
   type FieldMetadata,
   type FieldStorage,
+  type ListQuery,
   money,
   type ValueHelpItem,
   type ValueHelpPage,

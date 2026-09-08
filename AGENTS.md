@@ -155,6 +155,17 @@ below.
   entity-opening callback. Callbacks stay in the Worker and never enter database
   descriptors. Apply validation constraints before attaching field metadata;
   optional, nullable, default, catch, and read-only wrappers preserve it.
+- `ValueHelpRequest` carries the ordinary `ListQuery` (search, column filters,
+  and sort), offset, and limit. `ValueHelpPage` returns an ordinary Zod object
+  schema in display order, rows, `more`, and optional matching/unfiltered totals
+  (`totalItems`/`totalSourceItems`). Its first field is the selection key; later
+  fields use standard semantic types, labels, and descriptions. Schema and
+  callbacks stay server-side; UUI owns browser presentation.
+- `lookup.ts` owns `lookupPage(schema, selectedQuery, request)` for SQL lookups
+  over selected text/enum/boolean columns. Apply search, typed column filters,
+  and sort before bounded paging; return the matching count. Other field types
+  require their provider's query implementation. Do not load whole database
+  tables to filter or sort lookup results.
 - Optional `storage` metadata defines a field's SQL value representation once,
   checked against its Zod output type. It is immutable data on the cloned Zod
   definition, retained by refinements, clones, field customization, wrappers,

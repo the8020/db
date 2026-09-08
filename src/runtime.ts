@@ -106,12 +106,16 @@ class RemoteConnection implements DatabaseConnection {
         ? {}
         : { transaction: this.transaction }),
     });
+    // Immutable builder branches can share a Kysely query ID. Decode from this
+    // execution's compiled query, never mutable metadata keyed by that ID.
+    const codecs = resultCodecs(compiled.query);
     const rows = result.rows.map((values) =>
       Object.fromEntries(
-        result.columns.map((column, index) => [
-          column,
-          decodeDatabaseValue(values[index] ?? null),
-        ]),
+        result.columns.map((name, index) => {
+          const value = decodeDatabaseValue(values[index] ?? null);
+          const column = codecs.get(name);
+          return [name, column ? decodeLogicalValue(value, column) : value];
+        }),
       ) as Row
     );
     const affected = result.affected_rows === undefined
@@ -591,12 +595,9 @@ function resultCodecs(root: RootOperationNode): ResultCodecs {
 }
 
 class PlatformCodecPlugin implements KyselyPlugin {
-  readonly #results = new WeakMap<QueryId, ResultCodecs>();
-
   transformQuery(
     args: { queryId: QueryId; node: RootOperationNode },
   ): RootOperationNode {
-    this.#results.set(args.queryId, resultCodecs(args.node));
     return new CodecTransformer(args.node).transformNode(
       args.node,
       args.queryId,
@@ -607,22 +608,7 @@ class PlatformCodecPlugin implements KyselyPlugin {
     queryId: QueryId;
     result: QueryResult<UnknownRow>;
   }): Promise<QueryResult<UnknownRow>> {
-    const codecs = this.#results.get(args.queryId);
-    if (codecs === undefined || codecs.size === 0) {
-      return Promise.resolve(args.result);
-    }
-    return Promise.resolve({
-      ...args.result,
-      rows: args.result.rows.map((row) => {
-        const decoded: UnknownRow = { ...row };
-        for (const [name, column] of codecs) {
-          if (Object.hasOwn(decoded, name)) {
-            decoded[name] = decodeLogicalValue(decoded[name], column);
-          }
-        }
-        return decoded;
-      }),
-    });
+    return Promise.resolve(args.result);
   }
 }
 

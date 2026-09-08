@@ -521,3 +521,32 @@ Deno.test("streaming clearly reports the phase-one boundary", async () => {
     "streaming is not implemented",
   );
 });
+
+Deno.test("concurrent builder branches decode their own compiled projection", async () => {
+  const globals = globalThis as unknown as Record<symbol, unknown>;
+  const previous = globals[kernelInvokeSymbol];
+  const { sql } = await import("kysely");
+  const Choices = table("the8020__example__concurrent_codec", {
+    enabled: t.boolean(),
+  });
+  globals[kernelInvokeSymbol] = (
+    _operation: string,
+    input: Record<string, unknown>,
+  ) =>
+    Promise.resolve({
+      columns: ["enabled"],
+      rows: [[String(input.statement).includes("count(*)") ? 2 : 1]],
+    });
+  try {
+    const source = Choices.select([Choices.enabled]);
+    const [rows, count] = await Promise.all([
+      source.execute(),
+      source.clearSelect().select(sql<number>`count(*)`.as("enabled"))
+        .execute(),
+    ]);
+    assertEquals(rows, [{ enabled: true }]);
+    assertEquals(count, [{ enabled: 2 }]);
+  } finally {
+    globals[kernelInvokeSymbol] = previous;
+  }
+});

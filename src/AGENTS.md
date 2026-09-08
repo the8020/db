@@ -19,6 +19,9 @@ Parent DOX: [db DOX](../AGENTS.md).
   decimal value validation with the reusable Zod fields.
 - Runtime calls use the package-neutral kernel bridge and receive no connection
   credentials.
+- Decode each result using its compiled query's projection. Kysely builder
+  branches can share a query ID; concurrent executions must not overwrite each
+  other's codec metadata.
 - Bounded transaction scopes use the kernel-owned connection lifecycle; insert
   IDs are requested only for compiled inserts.
 - `descriptor.ts` adapts ordinary Zod fields with `t.from()` and structures with
