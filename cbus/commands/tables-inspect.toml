@@ -1,6 +1,6 @@
 version = 1
 command = "db.tables.inspect"
-program = "tables-inspect"
+program = "the8020/db/tables-inspect"
 summary = "Inspect a database table"
 usage = "<table-id>"
 mutates_state = false

@@ -1,6 +1,6 @@
 version = 1
 command = "db.sql"
-program = "sql"
+program = "the8020/db/sql"
 summary = "Run SQL against the system database"
 usage = "<statement> [--parameters <json>] [--execute]"
 mutates_state = true

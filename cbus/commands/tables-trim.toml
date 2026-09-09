@@ -1,6 +1,6 @@
 version = 1
 command = "db.tables.trim"
-program = "tables-trim"
+program = "the8020/db/tables-trim"
 summary = "Permanently trim retired database objects"
 usage = "<table-id> [--columns <names>] [--drop-table] --confirm"
 mutates_state = true

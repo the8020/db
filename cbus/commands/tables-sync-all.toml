@@ -1,6 +1,6 @@
 version = 1
 command = "db.tables.sync-all"
-program = "tables-sync-all"
+program = "the8020/db/tables-sync-all"
 summary = "Synchronize all activated tables"
 mutates_state = true
 restart_behavior = "none"

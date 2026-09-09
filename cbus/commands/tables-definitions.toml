@@ -1,6 +1,6 @@
 version = 1
 command = "db.tables.definitions"
-program = "tables-definitions"
+program = "the8020/db/tables-definitions"
 summary = "List activated table definitions"
 mutates_state = false
 restart_behavior = "none"

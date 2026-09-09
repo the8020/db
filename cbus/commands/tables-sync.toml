@@ -1,6 +1,6 @@
 version = 1
 command = "db.tables.sync"
-program = "tables-sync"
+program = "the8020/db/tables-sync"
 summary = "Synchronize one table"
 usage = "<table-id> [--package <package-id>]"
 mutates_state = true

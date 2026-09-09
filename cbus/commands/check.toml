@@ -1,6 +1,6 @@
 version = 1
 command = "db.check"
-program = "check"
+program = "the8020/db/check"
 summary = "Check the system database"
 mutates_state = false
 restart_behavior = "none"

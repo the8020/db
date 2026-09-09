@@ -1,6 +1,6 @@
 version = 1
 command = "db.tables.compare"
-program = "tables-compare"
+program = "the8020/db/tables-compare"
 summary = "Compare a table to its activated definition"
 usage = "<table-id>"
 mutates_state = false

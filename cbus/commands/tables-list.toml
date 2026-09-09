@@ -1,6 +1,6 @@
 version = 1
 command = "db.tables.list"
-program = "tables-list"
+program = "the8020/db/tables-list"
 summary = "List database tables"
 mutates_state = false
 restart_behavior = "none"
