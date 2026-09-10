@@ -139,6 +139,34 @@ export function fieldMetadata<T extends z.ZodType>(
   return result;
 }
 
+/** Search and page known choices without restricting the field's valid values. */
+export function choiceHelp<Value extends string | number | boolean>(
+  schema: z.ZodType<Value>,
+  items: readonly (Value | ValueHelpItem<Value>)[],
+): NonNullable<FieldMetadata<Value>["valueHelp"]> {
+  const rows = items.map((item) =>
+    typeof item === "object"
+      ? { value: item.value, label: item.label }
+      : { value: item, label: String(item) }
+  );
+  return async (request) => {
+    const { queryValueHelp } = await import("/p/the8020/uui/lists.ts");
+    return queryValueHelp(
+      z.object({
+        value: field(schema, {
+          label: fieldMetadata(schema)?.label ?? "Value",
+        }),
+        label: field(z.string(), {
+          label: "Name",
+          description: "The name or meaning of this choice.",
+        }),
+      }),
+      rows,
+      request,
+    );
+  };
+}
+
 /** Exact fixed-scale decimal strings, using the database codec's validation. */
 export function decimal(precision: number, scale: number): z.ZodString {
   assertDecimalDefinition(precision, scale);

@@ -1,4 +1,4 @@
-import { field, z } from "../fields.ts";
+import { choiceHelp, field, z } from "../fields.ts";
 
 export const tableId: z.ZodString = field(z.string(), {
   label: "Database table",
@@ -25,6 +25,7 @@ export const tableId: z.ZodString = field(z.string(), {
         state: field(z.string(), {
           label: "Status",
           description: "The table's current catalog state.",
+          valueHelp: choiceHelp(z.string(), ["active", "retired"]),
         }),
       }),
       rows,

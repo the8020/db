@@ -14,6 +14,8 @@ Parent DOX: [db DOX](../AGENTS.md).
   Apply ordinary list queries before paging the complete kernel catalog
   snapshot; send only the requested rows.
 - Open calls the public database administration program with the selected ID.
+- The lookup's catalog-state field supplies the known `active`/`retired`
+  choices.
 - Generic table inspection uses deployed metadata and never evaluates sources.
 
 # Work Guidance

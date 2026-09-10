@@ -4,7 +4,61 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "@std/assert";
-import { decimal, field, fieldMetadata, money, z } from "./fields.ts";
+import {
+  choiceHelp,
+  decimal,
+  field,
+  fieldMetadata,
+  money,
+  z,
+} from "./fields.ts";
+
+Deno.test("known choices retain open fields and use typed queries before paging", async () => {
+  const source = field(z.string(), { label: "Status" });
+  const status = field(source.optional(), {
+    valueHelp: choiceHelp(source, [
+      { value: "READY", label: "Accepting work" },
+      { value: "DRAINING", label: "Finishing existing work" },
+      "STOPPED",
+    ]),
+  });
+  assertEquals(status.parse("future state"), "future state");
+  assertEquals(status.parse(undefined), undefined);
+  assertEquals(fieldMetadata(source)?.valueHelp, undefined);
+  const help = fieldMetadata(status)!.valueHelp!;
+  const page = await help({
+    query: {
+      search: "work",
+      filters: {},
+      sort: { column: "value", direction: "asc" },
+    },
+    offset: 1,
+    limit: 1,
+  });
+  assertEquals(Object.keys(page.schema.shape), ["value", "label"]);
+  assertEquals(fieldMetadata(page.schema.shape.value!)?.label, "Status");
+  assertEquals(page.rows, [{ value: "READY", label: "Accepting work" }]);
+  assertEquals(page.more, false);
+  assertEquals(page.totalItems, 2);
+  assertEquals(page.totalSourceItems, 3);
+  const filtered = await help({
+    query: { search: "", filters: { value: "STOPPED" }, sort: null },
+    offset: 0,
+    limit: 1,
+  });
+  assertEquals(filtered.rows, [{ value: "STOPPED", label: "STOPPED" }]);
+  const numeric = await choiceHelp(z.number(), [2, 10, 1])({
+    query: {
+      search: "",
+      filters: { value: ">1" },
+      sort: { column: "value", direction: "asc" },
+    },
+    offset: 0,
+    limit: 1,
+  });
+  assertEquals(numeric.rows, [{ value: 2, label: "2" }]);
+  assertEquals(numeric.more, true);
+});
 
 Deno.test("decimal and money fields validate exact values with shared storage", () => {
   const amount = money();

@@ -166,6 +166,10 @@ below.
   and sort before bounded paging; return the matching count. Other field types
   require their provider's query implementation. Do not load whole database
   tables to filter or sort lookup results.
+- `choiceHelp(schema, items)` in `fields.ts` builds a paged provider for known
+  scalar values or value/name pairs. It lazily reuses UUI's ordinary list query
+  implementation, performs no query on import, and adds no field validation or
+  storage restriction. Domain packages own the choices.
 - Optional `storage` metadata defines a field's SQL value representation once,
   checked against its Zod output type. It is immutable data on the cloned Zod
   definition, retained by refinements, clones, field customization, wrappers,
