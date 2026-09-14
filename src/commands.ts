@@ -1,10 +1,8 @@
+import { AdminCommandError, type DatabaseValue, kernel } from "@the8020/kernel";
 import {
-  AdminCommandError,
-  type DatabaseValue,
-  kernel,
   parseCommandArguments,
   requiredCommandArgument,
-} from "@the8020/kernel";
+} from "/p/the8020/packages/commands.ts";
 
 export function check() {
   return kernel.database.check();

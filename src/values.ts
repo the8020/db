@@ -155,7 +155,6 @@ export function base64ToBytes(value: string): Uint8Array {
 
 export type TaggedDatabaseValue =
   | { type: "bigint"; value: string }
-  | { type: "decimal"; value: string; precision: number; scale: number }
   | { type: "datetime"; value: string }
   | { type: "bytes"; value: string }
   | { type: "json"; value: unknown };
@@ -181,12 +180,18 @@ export function encodeDatabaseValue(
       value.scale,
     );
   }
+  if (value === null) return null;
   if (
     value === null || typeof value === "boolean" || typeof value === "string"
   ) {
     if (logicalType === "decimal") {
-      assertDecimal(value, precision!, scale!);
-      return { type: "decimal", value, precision: precision!, scale: scale! };
+      if (typeof value !== "string") {
+        throw new TypeError("decimal value must be a canonical string");
+      }
+      return {
+        type: "bigint",
+        value: decimalToScaled(value, precision!, scale!).toString(),
+      };
     }
     if (logicalType === "json") return { type: "json", value };
     return value;
@@ -219,9 +224,6 @@ export function decodeDatabaseValue(value: DatabaseValue): unknown {
   switch (value.type) {
     case "bigint":
       return BigInt(value.value);
-    case "decimal":
-      assertDecimal(value.value, value.precision, value.scale);
-      return value.value;
     case "datetime": {
       const result = new Date(value.value);
       if (!Number.isFinite(result.getTime())) {

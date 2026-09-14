@@ -19,7 +19,7 @@ import {
   type Transaction,
   type TransactionSettings,
   type UnknownRow,
-} from "kysely";
+} from "/p/the8020/db/kysely.ts";
 import {
   type DatabaseBackend,
   kernelDatabaseBackend,
@@ -423,9 +423,9 @@ class CodecTransformer extends OperationNodeTransformer {
   }
 
   protected override transformInsertQuery(
-    value: import("kysely").InsertQueryNode,
+    value: import("/p/the8020/db/kysely.ts").InsertQueryNode,
     queryId?: QueryId,
-  ): import("kysely").InsertQueryNode {
+  ): import("/p/the8020/db/kysely.ts").InsertQueryNode {
     const previous = this.#insertColumns;
     const descriptor = registeredTable(tableName(value.into) ?? "");
     this.#insertColumns = value.columns?.map((column) =>
@@ -437,8 +437,8 @@ class CodecTransformer extends OperationNodeTransformer {
   }
 
   protected override transformPrimitiveValueList(
-    value: import("kysely").PrimitiveValueListNode,
-  ): import("kysely").PrimitiveValueListNode {
+    value: import("/p/the8020/db/kysely.ts").PrimitiveValueListNode,
+  ): import("/p/the8020/db/kysely.ts").PrimitiveValueListNode {
     if (this.#insertColumns === undefined) return value;
     return {
       ...value,
@@ -455,9 +455,9 @@ class CodecTransformer extends OperationNodeTransformer {
   }
 
   protected override transformValueList(
-    value: import("kysely").ValueListNode,
+    value: import("/p/the8020/db/kysely.ts").ValueListNode,
     queryId?: QueryId,
-  ): import("kysely").ValueListNode {
+  ): import("/p/the8020/db/kysely.ts").ValueListNode {
     if (this.#insertColumns === undefined) {
       return super.transformValueList(value, queryId);
     }
@@ -474,9 +474,9 @@ class CodecTransformer extends OperationNodeTransformer {
   }
 
   protected override transformUpdateQuery(
-    value: import("kysely").UpdateQueryNode,
+    value: import("/p/the8020/db/kysely.ts").UpdateQueryNode,
     queryId?: QueryId,
-  ): import("kysely").UpdateQueryNode {
+  ): import("/p/the8020/db/kysely.ts").UpdateQueryNode {
     const previous = this.#updateTable;
     const source = tableSource(value.table);
     this.#updateTable = source === undefined
@@ -488,9 +488,9 @@ class CodecTransformer extends OperationNodeTransformer {
   }
 
   protected override transformColumnUpdate(
-    value: import("kysely").ColumnUpdateNode,
+    value: import("/p/the8020/db/kysely.ts").ColumnUpdateNode,
     queryId?: QueryId,
-  ): import("kysely").ColumnUpdateNode {
+  ): import("/p/the8020/db/kysely.ts").ColumnUpdateNode {
     const result = super.transformColumnUpdate(value, queryId);
     const column = descriptorColumn(
       this.#updateTable,
@@ -503,9 +503,9 @@ class CodecTransformer extends OperationNodeTransformer {
   }
 
   protected override transformBinaryOperation(
-    value: import("kysely").BinaryOperationNode,
+    value: import("/p/the8020/db/kysely.ts").BinaryOperationNode,
     queryId?: QueryId,
-  ): import("kysely").BinaryOperationNode {
+  ): import("/p/the8020/db/kysely.ts").BinaryOperationNode {
     const result = super.transformBinaryOperation(value, queryId);
     const left = resolveColumn(result.leftOperand, this.#sources);
     const right = resolveColumn(result.rightOperand, this.#sources);

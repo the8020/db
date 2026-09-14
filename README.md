@@ -1,11 +1,13 @@
 # 80|20 database package
 
 `/p/the8020/db/mod.ts` defines application tables and exposes a normal Kysely
-database object. The Go kernel owns database credentials, connections, physical
-schema, and deployment synchronization.
+database object. This package owns logical values, schema SQL, synchronization,
+and catalog metadata. The Go kernel owns credentials, connections, bounded SQL,
+transactions, and native source publication.
 
-Kysely is pinned and materialized in the managed Deno runtime image; package
-source contains only the 80|20 layer.
+The db package pins Kysely in `kysely.ts` and shared Zod in `fields.ts`.
+Ordinary package imports load them through the native Deno cache; neither
+library is bundled into the kernel image.
 
 ## Tables
 
@@ -176,12 +178,16 @@ its physical data. The database program can permanently trim selected retired
 objects. Type changes and unsafe additions stop activation with
 `migration_required`.
 
+Schema application runs separately through the ordinary native SQL/transaction
+bridge. Decimal parameters cross that bridge as scaled bigint values; logical
+precision and scale stay in this package.
+
 The evaluator receives a read-only package tree, no database execution
 capability, and no direct credentials. Its batches are limited to 256 tables.
 
 ## Catalog and administration
 
-The kernel transactionally bootstraps only `_8020_catalog`, `_8020_tables`,
+The db package transactionally bootstraps `_8020_catalog`, `_8020_tables`,
 `_8020_columns`, `_8020_dependencies`, and `_8020_pending_deployment`. A new
 database stays uninitialized while all installed package tables are evaluated
 and synchronized in resumable batches; ordinary services start only after it is

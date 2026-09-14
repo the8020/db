@@ -1,4 +1,4 @@
-import { type SelectQueryBuilder, sql } from "kysely";
+import { type SelectQueryBuilder, sql } from "/p/the8020/db/kysely.ts";
 import {
   fieldSchemas,
   type ValueHelpPage,

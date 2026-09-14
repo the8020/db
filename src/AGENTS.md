@@ -22,6 +22,8 @@ Parent DOX: [db DOX](../AGENTS.md).
 - Decode each result using its compiled query's projection. Kysely builder
   branches can share a query ID; concurrent executions must not overwrite each
   other's codec metadata.
+- Decimal parameters use bigint transport; logical precision/scale validation
+  and exact scaling belong here. Nullable decimal values remain null.
 - Bounded transaction scopes use the kernel-owned connection lifecycle; insert
   IDs are requested only for compiled inserts.
 - `descriptor.ts` adapts ordinary Zod fields with `t.from()` and structures with
@@ -38,8 +40,8 @@ Parent DOX: [db DOX](../AGENTS.md).
 
 - Extend shared logical definitions only when existing Zod and Kysely
   composition cannot express the need. Check all affected descriptor, codec,
-  validation, and UI consumers while keeping physical connections and DDL with
-  the kernel owner.
+  validation, and UI consumers. Connections stay native; `../internal/` owns DDL
+  and schema synchronization.
 
 - Fix compiler and codec discrepancies here and kernel transport discrepancies
   in the kernel, with regression coverage at the owning layer.

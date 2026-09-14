@@ -366,7 +366,7 @@ Deno.test("logical values use tagged parameters and typed direct results", async
   assertEquals(parameters, [
     "one",
     true,
-    { type: "decimal", value: "125.50", precision: 18, scale: 2 },
+    { type: "bigint", value: "12550" },
     { type: "datetime", value: instant.toISOString() },
     { type: "bytes", value: "AP7/" },
     { type: "json", value: { source: "test" } },
@@ -375,7 +375,7 @@ Deno.test("logical values use tagged parameters and typed direct results", async
   const rows = await Typed.selectAll().where(Typed.total, ">", "100.00")
     .execute();
   assertEquals(parameters, [
-    { type: "decimal", value: "100.00", precision: 18, scale: 2 },
+    { type: "bigint", value: "10000" },
   ]);
   assertEquals(rows, [{
     id: "one",
@@ -525,7 +525,7 @@ Deno.test("streaming clearly reports the phase-one boundary", async () => {
 Deno.test("concurrent builder branches decode their own compiled projection", async () => {
   const globals = globalThis as unknown as Record<symbol, unknown>;
   const previous = globals[kernelInvokeSymbol];
-  const { sql } = await import("kysely");
+  const { sql } = await import("/p/the8020/db/kysely.ts");
   const Choices = table("the8020__example__concurrent_codec", {
     enabled: t.boolean(),
   });

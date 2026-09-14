@@ -73,3 +73,27 @@ Deno.test("kernel results decode through their authored logical column type", ()
     { ready: true },
   );
 });
+
+Deno.test("decimal parameters become physical integers before crossing the kernel boundary", () => {
+  for (
+    const [value, precision, scale, integer] of [
+      ["0.50", 2, 2, "50"],
+      ["-0.50", 2, 2, "-50"],
+      ["9999999999999999.99", 18, 2, "999999999999999999"],
+    ] as const
+  ) {
+    const wire = encodeDatabaseValue(value, "decimal", precision, scale);
+    assertEquals(wire, { type: "bigint", value: integer });
+    assertEquals(
+      decodeDatabaseColumnValue(wire, {
+        logical_type: "decimal",
+        precision,
+        scale,
+      }),
+      value,
+    );
+  }
+  assertEquals(encodeDatabaseValue(null, "decimal", 18, 2), null);
+  assertThrows(() => encodeDatabaseValue("0.5", "decimal", 2, 2));
+  assertThrows(() => encodeDatabaseValue("-0.00", "decimal", 2, 2));
+});

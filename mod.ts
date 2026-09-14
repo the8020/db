@@ -37,5 +37,5 @@ export type {
   Insertable,
   Selectable,
   Updateable,
-} from "kysely";
-export { sql } from "kysely";
+} from "/p/the8020/db/kysely.ts";
+export { sql } from "/p/the8020/db/kysely.ts";

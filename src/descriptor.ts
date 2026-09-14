@@ -12,7 +12,7 @@ import type {
   Updateable,
   UpdateQueryBuilder,
   UpdateResult,
-} from "kysely";
+} from "/p/the8020/db/kysely.ts";
 import type { Database } from "../types.ts";
 import type {
   ColumnDescriptor,

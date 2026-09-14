@@ -13,7 +13,9 @@ Parent DOX: [db DOX](../AGENTS.md).
 
 - Receive raw string arguments through default exports and report intentional
   input failures structurally.
-- Keep physical schema operations and database readiness in the kernel.
+- Administrative schema calls delegate to `../internal/schema.ts` through the
+  native operation adapter. Raw SQL, connections, and transaction cleanup remain
+  native and independent of schema-package availability.
 
 # Work Guidance
 

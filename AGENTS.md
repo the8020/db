@@ -118,8 +118,8 @@ below.
 
 - [cbus/AGENTS.md](cbus/AGENTS.md): Declare the public `db.*` and `db.tables.*`
   administrative commands.
-- [internal/AGENTS.md](internal/AGENTS.md): Evaluate validated table modules
-  into deterministic plain descriptors.
+- [internal/AGENTS.md](internal/AGENTS.md): Evaluate table modules and own
+  schema validation, SQL compilation, synchronization, and catalog metadata.
 - [programs/AGENTS.md](programs/AGENTS.md): Expose ordinary database
   administrative programs for the command bus.
 - [src/AGENTS.md](src/AGENTS.md): Own table descriptors, logical codecs, the
@@ -137,15 +137,41 @@ below.
 
 - Own authored TypeScript table descriptors, logical value codecs,
   administrative command programs, the application-facing `/p/the8020/db/mod.ts`
-  API, and the non-discoverable evaluator job.
-- Do not own credentials, connections, physical DDL, schema deployment order,
-  package activation, or database readiness; those belong to the Go kernel.
+  API, the restricted evaluator, and schema/catalog operations.
+- Own logical descriptor validation, physical storage mappings, DDL and
+  constraint generation, conservative schema comparison/synchronization,
+  retirement/trim, catalog bootstrap, and schema deployment metadata.
+- The kernel owns credentials, drivers, pools, bounded SQL, transaction
+  lifetimes, confined source evaluation, native publication locks, and service
+  admission. Package activation coordinates source publication with schema
+  preparation.
 
 # Local Contracts
+
+- This package owns the Zod pin in `fields.ts` and the Kysely pin/export in
+  `kysely.ts`. Consumers use these package modules; the kernel image supplies no
+  aliases, bundles, dependency types, or versions for either library. Shared
+  fields remain usable without constructing the database runtime.
 
 - Table modules at `packages/<namespace>/<package>/tables/<table>.ts` are the
   only authored schema source and default-export one `table()` object whose ID
   matches its normalized path.
+- Logical values are encoded before the SQL bridge. Decimal strings become
+  signed scaled integers using the existing bigint transport; precision, scale,
+  enums, references, and logical constraints never require native
+  interpretation.
+- `internal/schema.ts` runs as an ordinary authorized job, separate from the
+  evaluator's restricted Worker. It owns `_8020_*` schema metadata and publishes
+  readiness; kernel raw SQL and administrative execution remain available when
+  this package cannot initialize. Existing catalogs are validated without
+  writes.
+- Schema mutations recheck physical state inside native transactions. SQLite
+  acquires its writer through the catalog row before inspection; PostgreSQL uses
+  transaction advisory lock `802020260901`, shared with native publication.
+  Native requests identify an already-held publication lock to avoid reacquiring
+  it through another connection. No schema transaction spans table imports,
+  hooks, or filesystem writes. Catalog rows are inserted in batches of at most
+  128 through ordinary SQL.
 - Logical types are deliberately limited to text, boolean, safe integer, finite
   float, scaled decimal string, datetime, bytes, JSON, and string enum.
 - `fields.ts` is the runtime-independent semantic field API.
@@ -218,6 +244,12 @@ below.
 
 # Work Guidance
 
+- Build only what the request and established contracts require. Before adding a
+  mechanism, identify that need and why existing owners or standard tools cannot
+  meet it. Do not invent stronger guarantees for hypothetical cases. Remove
+  unsupported additions at closeout; agent-written tests and DOX do not
+  authorize them. Preserve required correctness, security, and data integrity.
+
 - Reuse ordinary Zod and Kysely composition before adding a database concept. A
   necessary extension must work across validation, storage, and UUI consumers
   without turning one application need into unrelated driver behavior.
@@ -235,4 +267,7 @@ below.
 
 - `deno task check` formats, lints, and type-checks the package.
 - `deno task test` covers descriptors, codecs, typing, helpers, the remote
-  driver, semantic field/structure reuse, and evaluator validation.
+  driver, semantic field/structure reuse, evaluator validation, SQL compilation,
+  and schema validation. Native database tests run this package against both the
+  SQL and transaction bridge; live PostgreSQL coverage requires the configured
+  disposable test database.
