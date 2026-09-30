@@ -107,6 +107,25 @@ const packageHash = (commits: Commits) =>
   );
 const now = () => new Date().toISOString();
 
+/**
+ * Serializes a descriptor fragment with sorted object keys. Stored descriptors
+ * keep the evaluator's key order, while descriptors that crossed the kernel
+ * transport may not; array order stays significant.
+ */
+function canonicalJSON(value: unknown): string {
+  return JSON.stringify(
+    value,
+    (_key, item: unknown) =>
+      item !== null && typeof item === "object" && !Array.isArray(item)
+        ? Object.fromEntries(
+          Object.entries(item as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0
+          ),
+        )
+        : item,
+  );
+}
+
 export class Schema {
   private transaction?: string;
   private pageSize?: number;
@@ -561,7 +580,7 @@ export class Schema {
     );
     const storage = (
       { reference: _reference, unique: _unique, ...c }: ColumnDescriptor,
-    ) => JSON.stringify(c);
+    ) => canonicalJSON(c);
     for (const c of next.columns) {
       const before = old.get(c.name);
       if (before) {
@@ -620,7 +639,7 @@ export class Schema {
     const indexes = new Map((previous.indexes ?? []).map((i) => [i.name, i]));
     for (const index of next.indexes ?? []) {
       const before = indexes.get(index.name);
-      if (before && JSON.stringify(before) !== JSON.stringify(index)) {
+      if (before && canonicalJSON(before) !== canonicalJSON(index)) {
         throw new Error(`changing index ${index.name} requires a migration`);
       }
       indexes.delete(index.name);
