@@ -22,6 +22,9 @@ Parent DOX: [db DOX](../AGENTS.md).
   expected table identity, batch bounds, and returned descriptors.
 - Descriptor validation ignores JSON object-key order across native transport,
   preserves authored array order, and verifies the evaluator's exact JSON/hash.
+  Schema change detection compares stored and candidate column and index
+  descriptors the same way, so an unchanged table never requires a migration
+  only because its keys arrived in another order.
 - Evaluation remains restricted and never gains SQL through schema application.
 - Schema operations retain existing safe-addition, drift, required-column
   retirement, rollback, explicit trim, source ownership, reference, and authored
