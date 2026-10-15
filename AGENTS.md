@@ -126,6 +126,8 @@ below.
   Kysely driver, and database command helpers.
 - [types/AGENTS.md](types/AGENTS.md): Share database table references for
   searchable lookup and linked administration.
+- [vendor/AGENTS.md](vendor/AGENTS.md): Pin and bundle Kysely and Zod with
+  original types and licenses.
 
 # Purpose
 
@@ -148,10 +150,12 @@ below.
 
 # Local Contracts
 
-- This package owns the Zod pin in `fields.ts` and the Kysely pin/export in
-  `kysely.ts`. Consumers use these package modules; the kernel image supplies no
-  aliases, bundles, dependency types, or versions for either library. Shared
-  fields remain usable without constructing the database runtime.
+- This package owns the Kysely/Zod pins and committed bundles in `vendor/`.
+  Consumers retain `kysely.ts` and `fields.ts`; their `@deno-types` bindings use
+  pinned upstream entrypoints for original types. `deno task bundle` regenerates
+  only external dependencies before publication, never at runtime. The kernel
+  image supplies no application libraries. Shared fields remain usable without
+  constructing the database runtime.
 
 - Table modules at `packages/<namespace>/<package>/tables/<table>.ts` are the
   only authored schema source and default-export one `table()` object whose ID

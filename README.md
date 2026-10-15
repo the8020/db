@@ -5,9 +5,10 @@ database object. This package owns logical values, schema SQL, synchronization,
 and catalog metadata. The Go kernel owns credentials, connections, bounded SQL,
 transactions, and native source publication.
 
-The db package pins Kysely in `kysely.ts` and shared Zod in `fields.ts`.
-Ordinary package imports load them through the native Deno cache; neither
-library is bundled into the kernel image.
+The db package pins Kysely and Zod in `vendor/` and ships their external
+dependency bundles. Consumers retain `kysely.ts` and `fields.ts`, with original
+upstream types. Run `deno task bundle` after changing a pin and commit the
+generated JavaScript. Neither library is bundled into the kernel image.
 
 ## Tables
 
