@@ -5,9 +5,10 @@ database object. This package owns logical values, schema SQL, synchronization,
 and catalog metadata. The Go kernel owns credentials, connections, bounded SQL,
 transactions, and native source publication.
 
-The db package pins Kysely in `kysely.ts` and shared Zod in `fields.ts`.
-Ordinary package imports load them through the native Deno cache; neither
-library is bundled into the kernel image.
+The db package pins Kysely and Zod in `vendor/` and ships their external
+dependency bundles. Consumers retain `kysely.ts` and `fields.ts`, with original
+upstream types. Run `deno task bundle` after changing a pin and commit the
+generated JavaScript. Neither library is bundled into the kernel image.
 
 ## Tables
 
@@ -175,8 +176,11 @@ boots do not scan all tables.
 
 Removing a definition or column retires it in the database catalog and retains
 its physical data. The database program can permanently trim selected retired
-objects. Type changes and unsafe additions stop activation with
-`migration_required`.
+objects. Supported native conversions are attempted transactionally. An optional
+table-file `migrate(ctx)` cleanup hook can selectively update/delete old-schema
+data before DDL, using its supplied `table` and transaction-bound `tx`. Failed
+hook/DDL/catalog work rolls back together. Unchanged and known-safe changes skip
+the hook.
 
 Schema application runs separately through the ordinary native SQL/transaction
 bridge. Decimal parameters cross that bridge as scaled bigint values; logical
@@ -188,11 +192,12 @@ capability, and no direct credentials. Its batches are limited to 256 tables.
 ## Catalog and administration
 
 The db package transactionally bootstraps `_8020_catalog`, `_8020_tables`,
-`_8020_columns`, `_8020_dependencies`, and `_8020_pending_deployment`. A new
-database stays uninitialized while all installed package tables are evaluated
-and synchronized in resumable batches; ordinary services start only after it is
-ready. Later boots validate the small catalog and skip the full scan unless an
-unfinished deployment needs recovery.
+`_8020_columns`, `_8020_dependencies`, `_8020_pending_deployment`, and
+activation-bound `_8020_schema_rewrites` receipts. A new database stays
+uninitialized while all installed package tables are evaluated and synchronized
+in resumable batches; ordinary services start only after it is ready. Later
+boots validate the small catalog and skip the full scan unless an unfinished
+deployment needs recovery.
 
 The Database UUI program is database-first: it lists deployed, retired, drifted,
 missing, and uncatalogued tables. Definition Changes evaluates current activated
@@ -200,9 +205,20 @@ source separately. Detail performs the full logical/physical/source comparison.
 Synchronize applies only supported changes; confirmed Trim is the explicit
 destructive escape hatch.
 
-The normal safe set is missing-table creation, additive nullable or literal-
-default columns, and missing ordinary/unique indexes. Removals stay physically
-present and become retired. Type, primary-key, nullability, existing-default,
-rename, and ambiguous constraint changes require a future migration or explicit
-administrative SQL. Physical foreign keys, streaming, savepoints, and package
-data seed hooks are intentionally deferred.
+Enum widening and enum-to-text are automatic. Native DDL enforces tighter target
+constraints; metadata preview performs no data scans/counts. PostgreSQL changes
+columns/checks in place; SQLite rebuilds only when its DDL limitations require
+it. Numeric/boolean to text and integer to float are supported; PostgreSQL also
+uses strict text-to-integer conversion. Unsupported conversions refuse without
+loss.
+
+`activate --preview --schema --package namespace/package` shows the candidate's
+exact affected columns and repair limits. `--force table-id.column` authorizes
+only incompatible-cell repair with legal NULL or the authored target default,
+after ordinary cleanup/activation and confirmed rollback. Valid cells, other
+columns, rows, keys, retired data and identities remain. Required/unique/key or
+unsupported repairs can fail; force never silently resets the table. Deployment
+consent is local to its target invocation. After commit, interrupted publication
+resumes the same candidate without repeating cleanup/repair. Keep cleanup code
+while its old-schema upgrade paths remain supported; use only its supplied
+transaction and no external effects. Backend DDL/repair may scan and lock rows.

@@ -30,7 +30,7 @@ export type PhysicalIndex = IndexDescriptor;
 export const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 export const quote = (value: string) => `"${value.replaceAll('"', '""')}"`;
-const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
+export const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
 export const validColumn = (value: string) =>
   /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(value);
 export const validTable = (value: string) =>
@@ -162,6 +162,7 @@ export function columnSQL(
 export function createTableSQL(
   backend: Backend,
   descriptor: TableDescriptor,
+  physicalName = descriptor.table_id,
 ): string {
   const parts = descriptor.columns.map((c) =>
     columnSQL(backend, descriptor.table_id, c, true)
@@ -172,7 +173,7 @@ export function createTableSQL(
   ) {
     parts.push(`PRIMARY KEY (${descriptor.primary_key.map(quote).join(", ")})`);
   }
-  return `CREATE TABLE ${quote(descriptor.table_id)} (${parts.join(", ")})${
+  return `CREATE TABLE ${quote(physicalName)} (${parts.join(", ")})${
     backend === "sqlite" ? " STRICT" : ""
   }`;
 }
@@ -345,7 +346,11 @@ export function validateEvaluatedTable(table: EvaluatedTable): void {
 const normalizeType = (v: string) =>
   v.trim().toLowerCase().replace(/\s+/g, " ");
 function normalizeDefault(v: string): string {
-  v = normalizeType(v);
+  v = v.trim().replace(
+    /'(?:''|[^'])*'|[^']+/g,
+    (part) =>
+      part.startsWith("'") ? part : part.toLowerCase().replace(/\s+/g, " "),
+  );
   while (v.startsWith("(") && v.endsWith(")")) v = v.slice(1, -1).trim();
   return v;
 }

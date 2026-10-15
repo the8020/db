@@ -126,6 +126,8 @@ below.
   Kysely driver, and database command helpers.
 - [types/AGENTS.md](types/AGENTS.md): Share database table references for
   searchable lookup and linked administration.
+- [vendor/AGENTS.md](vendor/AGENTS.md): Pin and bundle Kysely and Zod with
+  original types and licenses.
 
 # Purpose
 
@@ -148,10 +150,12 @@ below.
 
 # Local Contracts
 
-- This package owns the Zod pin in `fields.ts` and the Kysely pin/export in
-  `kysely.ts`. Consumers use these package modules; the kernel image supplies no
-  aliases, bundles, dependency types, or versions for either library. Shared
-  fields remain usable without constructing the database runtime.
+- This package owns the Kysely/Zod pins and committed bundles in `vendor/`.
+  Consumers retain `kysely.ts` and `fields.ts`; their `@deno-types` bindings use
+  pinned upstream entrypoints for original types. `deno task bundle` regenerates
+  only external dependencies before publication, never at runtime. The kernel
+  image supplies no application libraries. Shared fields remain usable without
+  constructing the database runtime.
 
 - Table modules at `packages/<namespace>/<package>/tables/<table>.ts` are the
   only authored schema source and default-export one `table()` object whose ID
@@ -233,6 +237,14 @@ below.
 - `internal/evaluator.ts` is a bounded job entrypoint, not a discoverable UUI
   program. It imports validated table modules and returns deterministic plain
   descriptors.
+- `migrations.ts`, exported through `mod.ts`, defines the optional table-file
+  `migrate(ctx)` and shared schema plan. It is a table-level API with ordinary
+  authored SQL, not a row transformer. Old-schema cleanup must fit old
+  types/checks and may intentionally update/delete rows. The DB owner attempts
+  supported native conversions and enforces target constraints in the same
+  transaction; unsupported conversion/repair stops without guessing or erasure.
+  Keep a migration while its supported previous schemas remain supported.
+  Changing function code alone does not rerun it.
 - `deno.json` contains deployed runtime mappings. Package-local checks and tests
   override them with `deno.local.json` as an import map so sibling source
   repositories resolve locally without replacing compiler options.
@@ -262,6 +274,15 @@ below.
   over custom query syntax or expression parsing.
 - Keep rare engine-native/raw expression results explicit rather than adding a
   complete runtime SQL type interpreter.
+
+## UI Rules
+
+- Do not add explanatory helper copy that restates what the control already
+  implies (e.g. "optional", "works without selection", "failure falls back to
+  X"). Prefer clear labels and option text; surface status in results when
+  needed, not as instructional paragraphs under every field.
+- Keep UI copy concise. Avoid tutorial-style descriptions unless the user
+  explicitly asks for onboarding help.
 
 # Verification
 

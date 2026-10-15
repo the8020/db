@@ -1,1 +1,2 @@
-export * from "npm:kysely@0.29.4";
+// @deno-types="./vendor/kysely.ts"
+export * from "./vendor/kysely.js";

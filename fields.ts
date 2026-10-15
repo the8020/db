@@ -1,6 +1,5 @@
-// A table's consumer need not carry the HTTP/UUI import map to use shared fields.
-// deno-lint-ignore no-import-prefix
-import { z } from "npm:zod@4.1.5";
+// @deno-types="./vendor/zod.ts"
+import { z } from "./vendor/zod.js";
 import type { JSONValue, LogicalType } from "./src/schema.ts";
 import {
   assertDecimal,
