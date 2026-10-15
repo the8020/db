@@ -12,7 +12,6 @@ import type { TableDescriptor } from "../src/schema.ts";
 const { table, t } = await import("../mod.ts");
 const { descriptorOf } = await import("../src/descriptor.ts");
 
-
 Deno.test("schema job rejects old native capability before SQL", async () => {
   const globals = globalThis as unknown as Record<symbol, unknown>;
   const invoke = globals[kernelInvokeSymbol],
