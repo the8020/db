@@ -90,6 +90,33 @@ declare module "/p/the8020/db/types.ts" {
   interface Database extends TableDatabase<typeof JoinCustomers> {}
 }
 
+Deno.test("upsert update assignments use the target table's logical codecs", async () => {
+  const Settings = table("the8020__example__upsert_codecs", {
+    id: t.text().primaryKey(),
+    value: t.json<{ domains: string[] }>(),
+    total: t.decimal(12, 2),
+  });
+  calls.length = 0;
+  await Settings.insert({
+    id: "https",
+    value: { domains: ["*"] },
+    total: "1.23",
+  })
+    .onConflict((conflict) =>
+      conflict.column("id").doUpdateSet({
+        value: { domains: ["example.test"] },
+        total: "4.56",
+      })
+    ).execute();
+  assertEquals(calls.at(-1)?.input.parameters, [
+    "https",
+    { type: "json", value: { domains: ["*"] } },
+    { type: "bigint", value: "123" },
+    { type: "json", value: { domains: ["example.test"] } },
+    { type: "bigint", value: "456" },
+  ]);
+});
+
 Deno.test("table descriptor preserves logical schema and composite keys", () => {
   const audit = columns({
     createdAt: t.datetime().defaultNow(),

@@ -463,12 +463,16 @@ class CodecTransformer extends OperationNodeTransformer {
     queryId?: QueryId,
   ): import("/p/the8020/db/kysely.ts").InsertQueryNode {
     const previous = this.#insertColumns;
+    const previousUpdate = this.#updateTable;
     const descriptor = this.lookup(tableName(value.into) ?? "");
+    // ON CONFLICT assignments target the inserted table's columns too.
+    this.#updateTable = descriptor;
     this.#insertColumns = value.columns?.map((column) =>
       descriptorColumn(descriptor, columnName(column) ?? "")
     );
     const result = super.transformInsertQuery(value, queryId);
     this.#insertColumns = previous;
+    this.#updateTable = previousUpdate;
     return result;
   }
 

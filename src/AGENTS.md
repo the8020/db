@@ -14,6 +14,8 @@ Parent DOX: [db DOX](../AGENTS.md).
 
 - Share logical value encoding and decoding between Kysely and descriptor-aware
   consumers.
+- Insert values and conflict-update assignments both use the target table's
+  column codecs, including JSON and scaled decimals.
 - `schema.ts` owns plain logical-type and descriptor contracts; it imports no
   runtime. `values.ts` shares decimal/enum definition validation and exact
   decimal value validation with the reusable Zod fields.
