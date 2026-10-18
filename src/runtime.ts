@@ -91,8 +91,20 @@ export function getDatabase(): Kysely<Database> {
   return activeDatabase;
 }
 
+type TableLookup = (name: string) => TableDescriptor | undefined;
+interface SchemaTransaction {
+  transaction: string;
+  tables: ReadonlyMap<string, TableDescriptor>;
+}
+
 class RemoteConnection implements DatabaseConnection {
   transaction?: string;
+  constructor(
+    private readonly lookup: TableLookup = registeredTable,
+    scope?: SchemaTransaction,
+  ) {
+    this.transaction = scope?.transaction;
+  }
 
   async executeQuery<Row>(compiled: CompiledQuery): Promise<QueryResult<Row>> {
     const result = await databaseAPI.execute({
@@ -108,7 +120,7 @@ class RemoteConnection implements DatabaseConnection {
     });
     // Immutable builder branches can share a Kysely query ID. Decode from this
     // execution's compiled query, never mutable metadata keyed by that ID.
-    const codecs = resultCodecs(compiled.query);
+    const codecs = resultCodecs(compiled.query, this.lookup);
     const rows = result.rows.map((values) =>
       Object.fromEntries(
         result.columns.map((name, index) => {
@@ -161,7 +173,10 @@ export interface TransactionOptions {
 }
 
 class RemoteDriver implements Driver {
-  constructor(private readonly options: TransactionOptions = {}) {}
+  constructor(
+    private readonly options: TransactionOptions = {},
+    private readonly scope?: SchemaTransaction,
+  ) {}
 
   init(_options?: AbortableOperationOptions): Promise<void> {
     return Promise.resolve();
@@ -170,7 +185,12 @@ class RemoteDriver implements Driver {
   acquireConnection(
     _options?: AbortableOperationOptions,
   ): Promise<DatabaseConnection> {
-    return Promise.resolve(new RemoteConnection());
+    return Promise.resolve(
+      new RemoteConnection(
+        (name) => this.scope?.tables.get(name) ?? registeredTable(name),
+        this.scope,
+      ),
+    );
   }
 
   async beginTransaction(
@@ -208,7 +228,9 @@ class RemoteDriver implements Driver {
     connection: DatabaseConnection,
     _options?: AbortableOperationOptions,
   ): Promise<void> {
-    if ((connection as RemoteConnection).transaction !== undefined) {
+    if (
+      !this.scope && (connection as RemoteConnection).transaction !== undefined
+    ) {
       return Promise.reject(
         new Error("cannot release an active database transaction"),
       );
@@ -237,12 +259,13 @@ class RemoteDialect implements Dialect {
   constructor(
     backend: DatabaseBackend,
     private readonly options: TransactionOptions = {},
+    private readonly scope?: SchemaTransaction,
   ) {
     this.#backend = backend;
   }
 
   createDriver(): Driver {
-    return new RemoteDriver(this.options);
+    return new RemoteDriver(this.options, this.scope);
   }
 
   createQueryCompiler(): SqliteQueryCompiler | PostgresQueryCompiler {
@@ -322,13 +345,14 @@ function reference(
   return { ...(table === undefined ? {} : { table }), column };
 }
 
-function querySources(root: RootOperationNode): Map<string, TableDescriptor> {
+function querySources(
+  root: RootOperationNode,
+  lookup: TableLookup,
+): Map<string, TableDescriptor> {
   const sources = new Map<string, TableDescriptor>();
   const add = (value: unknown) => {
     const source = tableSource(value);
-    const descriptor = source === undefined
-      ? undefined
-      : registeredTable(source.name);
+    const descriptor = source === undefined ? undefined : lookup(source.name);
     if (source !== undefined && descriptor !== undefined) {
       sources.set(source.alias, descriptor);
       sources.set(source.name, descriptor);
@@ -360,12 +384,13 @@ function descriptorColumn(
 function resolveColumn(
   value: unknown,
   sources: Map<string, TableDescriptor>,
+  lookup: TableLookup,
 ): ColumnDescriptor | undefined {
   const selected = reference(value);
   if (selected === undefined) return undefined;
   if (selected.table !== undefined) {
     return descriptorColumn(
-      sources.get(selected.table) ?? registeredTable(selected.table),
+      sources.get(selected.table) ?? lookup(selected.table),
       selected.column,
     );
   }
@@ -413,13 +438,24 @@ function encodeNodeValue(value: unknown, column: ColumnDescriptor): unknown {
 }
 
 class CodecTransformer extends OperationNodeTransformer {
-  readonly #sources: Map<string, TableDescriptor>;
+  #sources: Map<string, TableDescriptor>;
   #insertColumns: Array<ColumnDescriptor | undefined> | undefined;
   #updateTable: TableDescriptor | undefined;
 
-  constructor(root: RootOperationNode) {
+  constructor(root: RootOperationNode, private readonly lookup: TableLookup) {
     super();
-    this.#sources = querySources(root);
+    this.#sources = querySources(root, lookup);
+  }
+
+  protected override transformSelectQuery(
+    value: import("/p/the8020/db/kysely.ts").SelectQueryNode,
+    queryId?: QueryId,
+  ): import("/p/the8020/db/kysely.ts").SelectQueryNode {
+    const previous = this.#sources;
+    this.#sources = querySources(value, this.lookup);
+    const result = super.transformSelectQuery(value, queryId);
+    this.#sources = previous;
+    return result;
   }
 
   protected override transformInsertQuery(
@@ -427,12 +463,16 @@ class CodecTransformer extends OperationNodeTransformer {
     queryId?: QueryId,
   ): import("/p/the8020/db/kysely.ts").InsertQueryNode {
     const previous = this.#insertColumns;
-    const descriptor = registeredTable(tableName(value.into) ?? "");
+    const previousUpdate = this.#updateTable;
+    const descriptor = this.lookup(tableName(value.into) ?? "");
+    // ON CONFLICT assignments target the inserted table's columns too.
+    this.#updateTable = descriptor;
     this.#insertColumns = value.columns?.map((column) =>
       descriptorColumn(descriptor, columnName(column) ?? "")
     );
     const result = super.transformInsertQuery(value, queryId);
     this.#insertColumns = previous;
+    this.#updateTable = previousUpdate;
     return result;
   }
 
@@ -481,7 +521,7 @@ class CodecTransformer extends OperationNodeTransformer {
     const source = tableSource(value.table);
     this.#updateTable = source === undefined
       ? undefined
-      : registeredTable(source.name);
+      : this.lookup(source.name);
     const result = super.transformUpdateQuery(value, queryId);
     this.#updateTable = previous;
     return result;
@@ -507,8 +547,12 @@ class CodecTransformer extends OperationNodeTransformer {
     queryId?: QueryId,
   ): import("/p/the8020/db/kysely.ts").BinaryOperationNode {
     const result = super.transformBinaryOperation(value, queryId);
-    const left = resolveColumn(result.leftOperand, this.#sources);
-    const right = resolveColumn(result.rightOperand, this.#sources);
+    const left = resolveColumn(result.leftOperand, this.#sources, this.lookup);
+    const right = resolveColumn(
+      result.rightOperand,
+      this.#sources,
+      this.lookup,
+    );
     if (left !== undefined) {
       return {
         ...result,
@@ -533,9 +577,12 @@ class CodecTransformer extends OperationNodeTransformer {
 
 type ResultCodecs = Map<string, ColumnDescriptor>;
 
-function resultCodecs(root: RootOperationNode): ResultCodecs {
+function resultCodecs(
+  root: RootOperationNode,
+  lookup: TableLookup,
+): ResultCodecs {
   const item = root as unknown as Node;
-  const sources = querySources(root);
+  const sources = querySources(root, lookup);
   let selections: readonly unknown[] | undefined;
   if (Array.isArray(item.selections)) selections = item.selections;
   const returning = node(item.returning);
@@ -571,7 +618,7 @@ function resultCodecs(root: RootOperationNode): ResultCodecs {
       const sourceName = tableName(selected.table);
       const descriptor = sourceName === undefined
         ? undefined
-        : sources.get(sourceName) ?? registeredTable(sourceName);
+        : sources.get(sourceName) ?? lookup(sourceName);
       for (const column of descriptor?.columns ?? []) {
         codecs.set(column.name, column);
       }
@@ -579,14 +626,14 @@ function resultCodecs(root: RootOperationNode): ResultCodecs {
     }
     if (selected?.kind === "AliasNode") {
       const output = identifier(selected.alias);
-      const column = resolveColumn(selected.node, sources);
+      const column = resolveColumn(selected.node, sources, lookup);
       if (output !== undefined && column !== undefined) {
         codecs.set(output, column);
       }
       continue;
     }
     const selectedReference = reference(selected);
-    const column = resolveColumn(selected, sources);
+    const column = resolveColumn(selected, sources, lookup);
     if (selectedReference !== undefined && column !== undefined) {
       codecs.set(selectedReference.column, column);
     }
@@ -595,10 +642,11 @@ function resultCodecs(root: RootOperationNode): ResultCodecs {
 }
 
 class PlatformCodecPlugin implements KyselyPlugin {
+  constructor(private readonly lookup: TableLookup = registeredTable) {}
   transformQuery(
     args: { queryId: QueryId; node: RootOperationNode },
   ): RootOperationNode {
-    return new CodecTransformer(args.node).transformNode(
+    return new CodecTransformer(args.node, this.lookup).transformNode(
       args.node,
       args.queryId,
     );
@@ -613,13 +661,18 @@ class PlatformCodecPlugin implements KyselyPlugin {
 }
 
 /** Internal test seam; application code should use the exported singleton. */
-export function createDatabase(
+export function createDatabase<DB = Database>(
   backend: DatabaseBackend,
   options: TransactionOptions = {},
-): Kysely<Database> {
-  return new Kysely<Database>({
-    dialect: new RemoteDialect(backend, options),
-    plugins: [new PlatformCodecPlugin()],
+  scope?: SchemaTransaction,
+): Kysely<DB> {
+  return new Kysely<DB>({
+    dialect: new RemoteDialect(backend, options, scope),
+    plugins: [
+      new PlatformCodecPlugin((name) =>
+        scope?.tables.get(name) ?? registeredTable(name)
+      ),
+    ],
   });
 }
 
@@ -637,4 +690,16 @@ export async function transaction<T>(
   } finally {
     await database.destroy();
   }
+}
+
+/** Internal: bind codecs and SQL to a transaction whose lifecycle the schema owner controls. */
+export function schemaTransaction(
+  backend: DatabaseBackend,
+  transaction: string,
+  tables: ReadonlyMap<string, TableDescriptor>,
+): Kysely<Record<string, Record<string, unknown>>> {
+  return createDatabase<Record<string, Record<string, unknown>>>(backend, {}, {
+    transaction,
+    tables,
+  });
 }

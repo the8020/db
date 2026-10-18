@@ -11,6 +11,8 @@
       "esnext"
     ]
   },
+  "fmt": { "exclude": ["vendor"] },
+  "lint": { "exclude": ["vendor"] },
   "imports": {
     "@std/assert": "jsr:@std/assert@1.0.14",
     "/p/": "file:///workspace/packages/",
@@ -19,7 +21,8 @@
     "@the8020/context": "file:///opt/runtime/context/mod.ts"
   },
   "tasks": {
-    "check": "deno fmt --check . && deno lint . && deno check --import-map=deno.local.json mod.ts codecs.ts lookup.ts types/*.ts internal/*.ts src/*.ts programs/*/*.ts",
+    "bundle": "bash build-dependencies.sh",
+    "check": "bash -n build-dependencies.sh && deno fmt --check . && deno lint . && deno check --import-map=deno.local.json mod.ts codecs.ts lookup.ts types/*.ts internal/*.ts src/*.ts programs/*/*.ts",
     "test": "deno test --import-map=deno.local.json --allow-read=. ."
   }
 }

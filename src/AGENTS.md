@@ -14,6 +14,8 @@ Parent DOX: [db DOX](../AGENTS.md).
 
 - Share logical value encoding and decoding between Kysely and descriptor-aware
   consumers.
+- Insert values and conflict-update assignments both use the target table's
+  column codecs, including JSON and scaled decimals.
 - `schema.ts` owns plain logical-type and descriptor contracts; it imports no
   runtime. `values.ts` shares decimal/enum definition validation and exact
   decimal value validation with the reusable Zod fields.
@@ -35,6 +37,11 @@ Parent DOX: [db DOX](../AGENTS.md).
 - String formats such as `z.email()`, `z.url()`, and `z.uuid()` retain text
   storage. Numeric formats such as `z.int()` and `z.float64()` retain numeric
   storage. Infer from the primitive kind, not validation format names.
+- Schema-owned Kysely views bind one existing native transaction to the old
+  descriptor without registering another canonical table. Nested SELECT
+  predicates use their own sources, including authored cleanup subqueries;
+  candidate imports must not replace old-storage codecs. The schema owner alone
+  commits, rolls back or swaps storage.
 
 # Work Guidance
 

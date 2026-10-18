@@ -1,21 +1,37 @@
 /** Schema/catalog operations run as an ordinary authorized job, separate from table evaluation. */
-import { kernel, kernelDatabaseBackend } from "@the8020/kernel";
+import {
+  kernel,
+  kernelDatabaseBackend,
+  requireSchemaEvolution,
+} from "@the8020/kernel";
 import { decodeDatabaseValue, encodeDatabaseValue } from "../src/values.ts";
 import type { ColumnDescriptor, TableDescriptor } from "../src/schema.ts";
 import type { EvaluatedTable } from "./evaluator.ts";
+import type { SchemaPlan, TableMigration } from "../migrations.ts";
+import { checkDifferences, sqliteChecks } from "./checks.ts";
+import {
+  membershipChange,
+  migrationReasons,
+  semantic,
+  storage,
+} from "./evolution.ts";
 import { catalogChecks, catalogStatements, catalogVersion } from "./catalog.ts";
 import {
   type Backend,
+  checkExpression,
+  checkName,
   columnSQL,
-  compareChecks,
   compareColumn,
   compareIndexes,
   comparePhysical,
   createIndexSQL,
   createTableSQL,
+  defaultSQL,
   hash,
+  literal,
   type PhysicalColumn,
   type PhysicalIndex,
+  physicalType,
   quote,
   validateEvaluatedTable,
   validColumn,
@@ -28,6 +44,7 @@ interface Candidate {
   package_id: string;
   previous_commit?: string;
   candidate_commit: string;
+  candidate_root?: string;
 }
 interface Pending {
   ID: string;
@@ -40,6 +57,10 @@ interface Pending {
   Error: string;
   StartedAt: string;
   UpdatedAt: string;
+  Rewrites: Record<
+    string,
+    { hash: string; route: string; rows: number; columns: string[] }
+  >;
 }
 interface CatalogColumn {
   table_id: string;
@@ -82,17 +103,28 @@ interface SyncOptions {
   SkipReferenceValidation?: boolean;
   RetireMissingPackages?: string[];
   RetireTables?: string[];
+  ActivationID?: string;
+  ForceColumns?: string[];
+  ApprovedPlan?: string;
 }
 interface SyncResult {
   table_id: string;
   state: string;
   error?: string;
+  route?: string;
+  rows?: number;
 }
 export interface SchemaRequest {
   publication_lock_held?: boolean;
   operation: string;
   input?: Record<string, unknown>;
 }
+class MigrationFailure extends Error {
+  constructor(readonly table: string, cause: unknown) {
+    super(`${table}: migration failed: ${message(cause)}`);
+  }
+}
+
 class OperationFailure extends Error {
   constructor(message: string, readonly value: unknown = null) {
     super(message);
@@ -110,6 +142,8 @@ const now = () => new Date().toISOString();
 export class Schema {
   private transaction?: string;
   private pageSize?: number;
+  private migrations = new Map<string, TableMigration>();
+  private repairs = new Set<string>();
   constructor(
     readonly backend: Backend,
     private readonly publicationLockHeld = false,
@@ -169,9 +203,11 @@ export class Schema {
   }
   async atomic<T>(work: () => Promise<T>, bootstrap = false): Promise<T> {
     if (this.transaction) return await work();
-    this.transaction =
-      (await kernel.database.transaction.begin({ timeoutMs: 300000 }))
-        .transaction;
+    this.transaction = (await kernel.database.transaction.begin({
+      timeoutMs: 300000,
+      lockTimeoutMs: 5000,
+    }))
+      .transaction;
     try {
       // The database owns lock release on rollback, deadline, or Worker exit.
       // Native full synchronization may already hold the publication lock on
@@ -187,9 +223,15 @@ export class Schema {
       await kernel.database.transaction.commit(this.transaction);
       return result;
     } catch (error) {
-      await kernel.database.transaction.rollback(this.transaction).catch(
-        () => {},
-      );
+      try {
+        await kernel.database.transaction.rollback(this.transaction);
+      } catch (rollback) {
+        throw new Error(
+          `schema rollback unconfirmed: ${
+            message(rollback)
+          }; original failure: ${message(error)}`,
+        );
+      }
       throw error;
     } finally {
       this.transaction = undefined;
@@ -247,7 +289,24 @@ export class Schema {
     const row = await this.one<{ catalog_version: number }>(
       "SELECT catalog_version FROM _8020_catalog WHERE catalog_id = 'system'",
     );
-    if (row.catalog_version !== catalogVersion) {
+    if (row.catalog_version === 2) {
+      await this.atomic(async () => {
+        const current = await this.one<{ catalog_version: number }>(
+          "SELECT catalog_version FROM _8020_catalog WHERE catalog_id = 'system'",
+        );
+        if (current.catalog_version === 2) {
+          await this.exec(
+            catalogStatements(this.backend).find((s) =>
+              s.startsWith("CREATE TABLE IF NOT EXISTS _8020_schema_rewrites")
+            )!,
+          );
+          await this.exec(
+            "UPDATE _8020_catalog SET catalog_version = $1 WHERE catalog_id = 'system'",
+            [catalogVersion],
+          );
+        }
+      });
+    } else if (row.catalog_version !== catalogVersion) {
       throw new Error(
         `unsupported database catalog version ${row.catalog_version}`,
       );
@@ -325,6 +384,7 @@ export class Schema {
       Error: row.error!,
       StartedAt: row.started_at!,
       UpdatedAt: row.updated_at!,
+      Rewrites: await this.rewrites(row.deployment_id!),
     };
   }
   async beginDeployment(id: string, candidates: Candidate[]): Promise<Pending> {
@@ -341,6 +401,38 @@ export class Schema {
       );
     }
     return await this.atomic(async () => {
+      const upgrading = (await this.one<{ catalog_version: number }>(
+        "SELECT catalog_version FROM _8020_catalog WHERE catalog_id = 'system'",
+      )).catalog_version === 2;
+      if (upgrading) await this.initialize();
+      const existing = await this.pending(id);
+      if (existing) {
+        if (upgrading) {
+          throw new Error(
+            "finish the pending activation before upgrading the database catalog",
+          );
+        }
+        if (
+          semantic(
+            existing.Candidates.map(({ package_id, candidate_commit }) => ({
+              package_id,
+              candidate_commit,
+            })),
+          ) !==
+            semantic(
+              candidates.map(({ package_id, candidate_commit }) => ({
+                package_id,
+                candidate_commit,
+              })),
+            )
+        ) throw new Error("pending activation candidate changed");
+        return existing;
+      }
+      if (Object.keys(await this.rewrites(id)).length) {
+        throw new Error(
+          "activation identity already has committed schema rewrites",
+        );
+      }
       const claims = await this.scan<
         { deployment_id: string; candidates_json: string }
       >(
@@ -385,6 +477,12 @@ export class Schema {
           time,
         ],
       );
+      if (upgrading) {
+        await this.exec(
+          "INSERT INTO _8020_schema_rewrites (deployment_id, table_id, target_hash, route, row_count) VALUES ($1, '_8020_catalog', $2, 'catalog', 0)",
+          [id, hash(`catalog:${catalogVersion}`)],
+        );
+      }
       return (await this.pending(id))!;
     });
   }
@@ -427,6 +525,11 @@ export class Schema {
           );
         }
       } else {
+        if (Object.keys(pending.Rewrites).length) {
+          throw new Error(
+            `schema/data committed for ${id}; activation incomplete, resume the same candidate forward`,
+          );
+        }
         await this.exec(
           "UPDATE _8020_catalog SET updated_at = $1, last_deployment_at = $1, last_deployment_error = $2 WHERE catalog_id = 'system'",
           [
@@ -441,6 +544,30 @@ export class Schema {
         [id],
       );
     });
+  }
+  async rewrites(id: string): Promise<Pending["Rewrites"]> {
+    const rows = await this.scan<
+      {
+        table_id: string;
+        target_hash: string;
+        route: string;
+        row_count: number;
+        columns_json: string;
+      }
+    >(
+      "SELECT table_id, target_hash, route, row_count, columns_json FROM _8020_schema_rewrites WHERE deployment_id = $1 ORDER BY table_id",
+      [id],
+    );
+    return Object.fromEntries(
+      rows.map((
+        r,
+      ) => [r.table_id, {
+        hash: r.target_hash,
+        route: r.route,
+        rows: Number(r.row_count),
+        columns: JSON.parse(r.columns_json),
+      }]),
+    );
   }
   async physicalColumns(table: string): Promise<PhysicalColumn[]> {
     if (this.backend === "sqlite") {
@@ -529,25 +656,557 @@ export class Schema {
     }));
   }
   async physicalChecks(table: string): Promise<string[]> {
+    return Object.keys(await this.physicalCheckDefinitions(table)).sort();
+  }
+  async physicalCheckDefinitions(
+    table: string,
+  ): Promise<Record<string, string>> {
     if (this.backend === "sqlite") {
       const row = (await this.rows<{ sql: string }>(
         "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = $1",
         [table],
       ))[0];
-      return [
-        ...(row?.sql ?? "").matchAll(/CONSTRAINT\s+"([^"]+)"\s+CHECK\s*\(/gi),
-      ].map((m) => m[1]!).sort();
+      return sqliteChecks(row?.sql ?? "");
     }
-    return (await this.scan<{ conname: string }>(
-      `SELECT c.conname FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+    return Object.fromEntries(
+      (await this.scan<{ conname: string; expression: string }>(
+        `SELECT c.conname, pg_get_expr(c.conbin, c.conrelid) AS expression FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
       JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = current_schema() AND t.relname = $1 AND c.contype = 'c' ORDER BY c.conname`,
-      [table],
-    )).map((r) => r.conname);
+        [table],
+      )).map((r) => [r.conname, r.expression]),
+    );
+  }
+  retainedDescriptor(detail: Detail): TableDescriptor {
+    const d = structuredClone(detail.descriptor);
+    for (const column of detail.columns.filter((c) => c.state === "retired")) {
+      if (hash(column.definition_json) !== column.definition_hash) {
+        throw new Error(`retired column ${column.column_name} hash differs`);
+      }
+      const c = JSON.parse(column.definition_json) as ColumnDescriptor;
+      c.nullable = detail.physical_columns.find((p) =>
+        p.name === c.name
+      )?.nullable ?? c.nullable;
+      d.columns.push(c);
+    }
+    d.indexes = detail.physical_indexes;
+    return d;
+  }
+  async lockTables(ids: string[]): Promise<void> {
+    if (this.backend === "postgresql") {
+      for (const id of [...new Set(ids)].sort()) {
+        if (await this.exists(id)) {
+          await this.exec(`LOCK TABLE ${quote(id)} IN ACCESS EXCLUSIVE MODE`);
+        }
+      }
+    }
+  }
+  async assertRewriteSafe(id: string): Promise<Detail> {
+    const detail = await this.inspect(id);
+    const previous = await this.retainedDescriptor(detail);
+    const differences = [
+      ...detail.differences,
+      ...checkDifferences(
+        this.backend,
+        previous,
+        await this.physicalCheckDefinitions(id),
+      ),
+    ];
+    if (differences.length) {
+      throw new Error(
+        `${id}: unresolved physical/catalog drift: ${differences.join("; ")}`,
+      );
+    }
+    if (this.backend === "sqlite") {
+      const dependencies = await this.rows<{ name: string }>(
+        "SELECT name FROM sqlite_schema WHERE (type = 'trigger' AND tbl_name = $1) OR (type = 'view' AND instr(sql, $1) > 0)",
+        [id],
+      );
+      const foreignKeys = await this.rows(
+        "SELECT * FROM pragma_foreign_key_list($1)",
+        [id],
+      );
+      const extras = await this.rows(
+        "SELECT * FROM pragma_index_list($1) WHERE origin = 'u' OR partial <> 0",
+        [id],
+      );
+      const hidden = await this.rows(
+        "SELECT * FROM pragma_table_xinfo($1) WHERE hidden <> 0",
+        [id],
+      );
+      const sql = (await this.one<{ sql: string }>(
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = $1",
+        [id],
+      )).sql;
+      if (
+        dependencies.length || foreignKeys.length || extras.length ||
+        hidden.length ||
+        /\b(COLLATE|REFERENCES|AUTOINCREMENT|WITHOUT\s+ROWID)\b/i.test(sql)
+      ) {
+        throw new Error(
+          `${id}: unsupported external dependencies or table features`,
+        );
+      }
+      const incoming = await this.rows(
+        "SELECT s.name FROM sqlite_schema s JOIN pragma_foreign_key_list(s.name) f WHERE s.type = 'table' AND f.\"table\" = $1",
+        [id],
+      );
+      if (incoming.length) {
+        throw new Error(
+          `${id}: external physical references prevent replacement`,
+        );
+      }
+    } else {
+      const dependencies = await this.rows(
+        `SELECT t.oid FROM pg_class t JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = current_schema() AND t.relname = $1 AND
+        (t.relkind <> 'r' OR t.relispartition OR t.relrowsecurity OR
+        EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = t.oid AND NOT g.tgisinternal) OR
+        EXISTS (SELECT 1 FROM pg_constraint c WHERE (c.conrelid = t.oid AND c.contype NOT IN ('p', 'c')) OR (c.confrelid = t.oid)) OR
+        EXISTS (SELECT 1 FROM pg_depend d JOIN pg_rewrite r ON r.oid = d.objid WHERE d.refobjid = t.oid AND d.classid = 'pg_rewrite'::regclass) OR
+        EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = t.oid OR i.inhparent = t.oid))`,
+        [id],
+      );
+      if (dependencies.length) {
+        throw new Error(`${id}: unsupported external PostgreSQL dependencies`);
+      }
+    }
+    return detail;
+  }
+  async evolve(
+    e: EvaluatedTable,
+    detail: Detail,
+    activationId: string,
+    route: "automatic" | "cleanup" | "repair",
+    force: Set<string>,
+  ): Promise<void> {
+    const id = e.descriptor.table_id, old = this.retainedDescriptor(detail);
+    const target = structuredClone(e.descriptor);
+    target.indexes ??= [];
+    if (semantic(old.primary_key) !== semantic(target.primary_key)) {
+      throw new Error(
+        `${id}: primary-key changes require an explicit staged migration; force cannot rekey or erase rows`,
+      );
+    }
+    for (const c of old.columns) {
+      const next = target.columns.find((n) => n.name === c.name);
+      if (
+        next &&
+        (c.generated !== next.generated ||
+          (c.primary_key && storage(c) !== storage(next)))
+      ) {
+        throw new Error(
+          `${id}.${c.name}: identity/key conversion is unsupported; no data cleared`,
+        );
+      }
+      if (!next) {
+        target.columns.push({ ...c, nullable: c.nullable || !c.default });
+      }
+    }
+    for (const index of old.indexes) {
+      if (
+        index.columns.every((name) =>
+          !e.descriptor.columns.some((c) => c.name === name)
+        ) && !target.indexes.some((i) => i.name === index.name)
+      ) target.indexes.push(index);
+    }
+    if (route === "cleanup") {
+      const migrate = this.migrations.get(id);
+      if (migrate) {
+        const { schemaTransaction } = await import("../src/runtime.ts");
+        const tx = schemaTransaction(
+          this.backend,
+          this.transaction!,
+          new Map([[id, old]]),
+        );
+        try {
+          await migrate({
+            activationId,
+            table: id,
+            previous: {
+              descriptor: detail.descriptor,
+              hash: detail.descriptor_hash,
+              retained: old.columns.filter((c) =>
+                !detail.descriptor.columns.some((n) => n.name === c.name)
+              ),
+            },
+            next: { descriptor: e.descriptor, hash: e.descriptor_hash },
+            tx,
+          });
+        } catch (error) {
+          if (
+            /timeout|deadline|cancel|permission|connection|unavailable|locked|lock wait/i
+              .test(message(error))
+          ) throw error;
+          throw new MigrationFailure(id, error);
+        } finally {
+          await tx.destroy();
+        }
+      }
+    }
+    const expression = (c: ColumnDescriptor): string => {
+      const before = old.columns.find((p) => p.name === c.name);
+      let value = before
+        ? this.conversion(before, c)
+        : c.default
+        ? defaultSQL(this.backend, c)
+        : "NULL";
+      if (force.has(`${id}.${c.name}`)) {
+        if (c.primary_key || c.generated || (before && before.generated)) {
+          throw new Error(
+            `${id}.${c.name}: force cannot change keys or generated identity`,
+          );
+        }
+        const fallback = c.nullable
+          ? "NULL"
+          : c.default?.kind === "literal"
+          ? defaultSQL(this.backend, c)
+          : undefined;
+        if (fallback === undefined) {
+          throw new Error(
+            `${id}.${c.name}: no legal NULL or authored literal default; no data cleared`,
+          );
+        }
+        if (
+          before && before.logical_type !== c.logical_type &&
+          !["text", "enum"].includes(c.logical_type)
+        ) {
+          throw new Error(
+            `${id}.${c.name}: safe partial repair for this conversion is unsupported; no data cleared`,
+          );
+        }
+        const valid = c.logical_type === "enum"
+          ? `${value} IN (${c.enum_values!.map(literal).join(", ")})`
+          : "TRUE";
+        value = `CASE WHEN (${value} IS NULL AND ${
+          c.nullable ? "TRUE" : "FALSE"
+        }) OR (${value} IS NOT NULL AND (${valid})) THEN ${value} ELSE ${fallback} END`;
+      }
+      return value;
+    };
+    try {
+      if (
+        this.backend === "sqlite" &&
+        semantic(old.columns) === semantic(target.columns)
+      ) {
+        for (const index of old.indexes) {
+          const next = target.indexes.find((i) => i.name === index.name);
+          if (!next || semantic(next) !== semantic(index)) {
+            await this.exec(`DROP INDEX ${quote(index.name)}`);
+          }
+        }
+        for (const index of target.indexes) {
+          const before = old.indexes.find((i) => i.name === index.name);
+          if (!before || semantic(before) !== semantic(index)) {
+            await this.exec(createIndexSQL(id, index));
+          }
+        }
+      } else if (this.backend === "sqlite") {
+        const replacement = `__8020_rewrite_${hash(id).slice(0, 24)}`;
+        await this.exec(createTableSQL(this.backend, target, replacement));
+        await this.exec(
+          `INSERT INTO ${quote(replacement)} (${
+            target.columns.map((c) => quote(c.name)).join(", ")
+          }) SELECT ${target.columns.map(expression).join(", ")} FROM ${
+            quote(id)
+          }`,
+        );
+        await this.exec(`DROP TABLE ${quote(id)}`);
+        await this.exec(
+          `ALTER TABLE ${quote(replacement)} RENAME TO ${quote(id)}`,
+        );
+        for (const index of target.indexes) {
+          await this.exec(createIndexSQL(id, index));
+        }
+      } else {
+        for (const c of target.columns) {
+          const before = old.columns.find((p) => p.name === c.name);
+          if (!before) {
+            await this.exec(
+              `ALTER TABLE ${quote(id)} ADD COLUMN ${
+                columnSQL(this.backend, id, c, true)
+              }`,
+            );
+            continue;
+          }
+          if (storage(before) === storage(c)) continue;
+          const value = expression(c);
+          if (checkExpression(this.backend, before)) {
+            await this.exec(
+              `ALTER TABLE ${quote(id)} DROP CONSTRAINT ${
+                quote(checkName(id, c.name))
+              }`,
+            );
+          }
+          await this.exec(
+            `ALTER TABLE ${quote(id)} ALTER COLUMN ${
+              quote(c.name)
+            } DROP DEFAULT`,
+          );
+          if (c.nullable) {
+            await this.exec(
+              `ALTER TABLE ${quote(id)} ALTER COLUMN ${
+                quote(c.name)
+              } DROP NOT NULL`,
+            );
+          }
+          if (
+            physicalType(this.backend, before) !==
+              physicalType(this.backend, c) ||
+            before.logical_type !== c.logical_type &&
+              !["text", "enum"].every((t) =>
+                [before.logical_type, c.logical_type].includes(
+                  t as typeof c.logical_type,
+                )
+              )
+          ) {
+            await this.exec(
+              `ALTER TABLE ${quote(id)} ALTER COLUMN ${quote(c.name)} TYPE ${
+                physicalType(this.backend, c)
+              } USING (${value})`,
+            );
+          } else if (force.has(`${id}.${c.name}`)) {
+            await this.exec(
+              `UPDATE ${quote(id)} SET ${quote(c.name)} = ${value} WHERE ${
+                quote(c.name)
+              } IS DISTINCT FROM (${value})`,
+            );
+          }
+          if (c.default) {
+            await this.exec(
+              `ALTER TABLE ${quote(id)} ALTER COLUMN ${
+                quote(c.name)
+              } SET DEFAULT ${defaultSQL(this.backend, c)}`,
+            );
+          }
+          if (!c.nullable) {
+            await this.exec(
+              `ALTER TABLE ${quote(id)} ALTER COLUMN ${
+                quote(c.name)
+              } SET NOT NULL`,
+            );
+          }
+          const check = checkExpression(this.backend, c);
+          if (check) {
+            await this.exec(
+              `ALTER TABLE ${quote(id)} ADD CONSTRAINT ${
+                quote(checkName(id, c.name))
+              } CHECK (${check})`,
+            );
+          }
+        }
+        for (const index of old.indexes) {
+          const next = target.indexes.find((i) => i.name === index.name);
+          if (!next || semantic(next) !== semantic(index)) {
+            await this.exec(`DROP INDEX ${quote(index.name)}`);
+          }
+        }
+        for (const index of target.indexes) {
+          const before = old.indexes.find((i) => i.name === index.name);
+          if (!before || semantic(before) !== semantic(index)) {
+            await this.exec(createIndexSQL(id, index));
+          }
+        }
+      }
+    } catch (error) {
+      if (
+        /constraint|invalid input syntax|out of range|cannot store|datatype mismatch|not.null|unique/i
+          .test(message(error)) &&
+        !/permission|timeout|deadline|cancel|connection|locked/i.test(
+          message(error),
+        )
+      ) throw new MigrationFailure(id, error);
+      throw error;
+    }
+    if (activationId) {
+      await this.exec(
+        "INSERT INTO _8020_schema_rewrites (deployment_id, table_id, target_hash, route, row_count, columns_json) VALUES ($1, $2, $3, $4, 0, $5)",
+        [
+          activationId,
+          id,
+          e.descriptor_hash,
+          route,
+          JSON.stringify(
+            [...force].filter((c) => c.startsWith(id + ".")).map((c) =>
+              c.slice(id.length + 1)
+            ),
+          ),
+        ],
+      );
+    }
+  }
+  conversion(before: ColumnDescriptor, next: ColumnDescriptor): string {
+    const name = quote(before.name),
+      from = before.logical_type,
+      to = next.logical_type;
+    if (from === to) {
+      if (
+        from === "decimal" &&
+        (before.scale !== next.scale || before.precision !== next.precision)
+      ) {
+        throw new Error(
+          `${before.name}: decimal representation change is unsupported; no data cleared`,
+        );
+      }
+      return name;
+    }
+    if (["text", "enum"].includes(from) && ["text", "enum"].includes(to)) {
+      return name;
+    }
+    if (
+      this.backend === "sqlite" && from === "float" &&
+      ["text", "enum"].includes(to)
+    ) {
+      return `CASE WHEN ${name} IS NULL THEN NULL ELSE printf('%!.17g', ${name}) END`;
+    }
+    if (
+      ["text", "enum"].includes(to) &&
+      ["integer", "float", "boolean"].includes(from)
+    ) return `CAST(${name} AS text)`;
+    if (from === "integer" && to === "float") {
+      return `CAST(${name} AS ${physicalType(this.backend, next)})`;
+    }
+    if (
+      this.backend === "postgresql" && ["text", "enum"].includes(from) &&
+      to === "integer"
+    ) return `CAST(${name} AS ${physicalType(this.backend, next)})`;
+    throw new Error(
+      `${before.name}: ${from} to ${to} is unsupported on ${this.backend}; author a staged column/table change, no data cleared`,
+    );
   }
   async ensureIndexes(d: TableDescriptor): Promise<void> {
     for (const index of d.indexes ?? []) {
       await this.exec(createIndexSQL(d.table_id, index));
     }
+  }
+  async incomingReferences(
+    tables: EvaluatedTable[],
+  ): Promise<Map<string, string[]>> {
+    const stored = await this.scan<{ descriptor_json: string }>(
+      "SELECT descriptor_json FROM _8020_tables WHERE state = 'active' ORDER BY table_id",
+    );
+    const definitions = new Map<string, TableDescriptor>(stored.map((r) => {
+      const d = JSON.parse(r.descriptor_json) as TableDescriptor;
+      return [d.table_id, d];
+    }));
+    for (const e of tables) {
+      definitions.set(e.descriptor.table_id, e.descriptor);
+    }
+    const incoming = new Map<string, string[]>();
+    for (const d of definitions.values()) {
+      for (const c of d.columns) {
+        if (c.reference) {
+          const key = `${c.reference.table}.${c.reference.column}`;
+          incoming.set(key, [
+            ...(incoming.get(key) ?? []),
+            `${d.table_id}.${c.name}`,
+          ]);
+          incoming.set(c.reference.table, [
+            ...(incoming.get(c.reference.table) ?? []),
+            `${d.table_id}.${c.name}`,
+          ]);
+        }
+      }
+    }
+    return incoming;
+  }
+  async plan(tables: EvaluatedTable[]): Promise<SchemaPlan> {
+    const plans: SchemaPlan["tables"] = [], physical: unknown[] = [];
+    const incoming = await this.incomingReferences(tables);
+    for (
+      const e of [...tables].sort((a, b) =>
+        a.descriptor.table_id.localeCompare(b.descriptor.table_id)
+      )
+    ) {
+      validateEvaluatedTable(e);
+      const id = e.descriptor.table_id;
+      const stored = (await this.rows<{ descriptor_hash: string }>(
+        "SELECT descriptor_hash FROM _8020_tables WHERE table_id = $1",
+        [id],
+      ))[0];
+      const detail = stored ? await this.inspect(id) : undefined;
+      if (
+        detail &&
+        (detail.source_package !== e.source_package ||
+          detail.source_module !== e.source_module)
+      ) {
+        throw new Error(
+          `canonical table ID ${id} is already owned by ${detail.source_package} at ${detail.source_module}`,
+        );
+      }
+      if (detail?.differences.length) {
+        throw new Error(
+          `${id}: unresolved physical/catalog drift: ${
+            detail.differences.join("; ")
+          }`,
+        );
+      }
+      if (detail) {
+        physical.push([
+          id,
+          detail.physical_columns,
+          detail.physical_indexes,
+          await this.physicalCheckDefinitions(id),
+        ]);
+      }
+      const reasons = detail
+        ? migrationReasons(detail.descriptor, e.descriptor, this.backend)
+        : [];
+      const affected = detail
+        ? e.descriptor.columns.filter((c) => {
+          const before = detail.descriptor.columns.find((p) =>
+            p.name === c.name
+          );
+          return before && storage(before) !== storage(c) &&
+            !this.safeChange(before, c);
+        })
+        : [];
+      plans.push({
+        table_id: id,
+        source_package: e.source_package,
+        previous_hash: stored?.descriptor_hash ?? "",
+        target_hash: e.descriptor_hash,
+        route: reasons.length
+          ? e.has_migrate ? "cleanup" : "attempt"
+          : "automatic",
+        reasons,
+        affected_columns: affected.map((c) => ({
+          name: c.name,
+          repair: c.primary_key || c.generated
+            ? "unsupported"
+            : c.nullable
+            ? "null"
+            : c.default?.kind === "literal"
+            ? "default"
+            : "unsupported",
+        })),
+        retired_columns: detail?.columns.filter((c) =>
+          c.state === "retired" || !e.descriptor.columns.some((n) =>
+            n.name === c.column_name
+          )
+        ).map((c) => c.column_name) ?? [],
+        incoming_references: incoming.get(id) ?? [],
+      });
+    }
+    return {
+      identity: hash(
+        semantic({
+          tables: plans,
+          physical,
+          sources: tables.map((e) => [e.source_package, e.source_commit])
+            .sort(),
+        }),
+      ),
+      tables: plans,
+    };
+  }
+  safeChange(before: ColumnDescriptor, next: ColumnDescriptor): boolean {
+    if (membershipChange(before, next)) {
+      return next.logical_type === "text" ||
+        before.logical_type === "enum" &&
+          before.enum_values!.every((v) => next.enum_values!.includes(v));
+    }
+    const a = { ...before, default: undefined, nullable: true },
+      b = { ...next, default: undefined, nullable: true };
+    return storage(a) === storage(b) && (!before.nullable || next.nullable);
   }
   async applyChange(
     previous: TableDescriptor,
@@ -559,9 +1218,6 @@ export class Schema {
     const physical = new Map(
       (await this.physicalColumns(next.table_id)).map((c) => [c.name, c]),
     );
-    const storage = (
-      { reference: _reference, unique: _unique, ...c }: ColumnDescriptor,
-    ) => JSON.stringify(c);
     for (const c of next.columns) {
       const before = old.get(c.name);
       if (before) {
@@ -620,7 +1276,7 @@ export class Schema {
     const indexes = new Map((previous.indexes ?? []).map((i) => [i.name, i]));
     for (const index of next.indexes ?? []) {
       const before = indexes.get(index.name);
-      if (before && JSON.stringify(before) !== JSON.stringify(index)) {
+      if (before && semantic(before) !== semantic(index)) {
         throw new Error(`changing index ${index.name} requires a migration`);
       }
       indexes.delete(index.name);
@@ -720,6 +1376,8 @@ export class Schema {
   async synchronizeTable(
     e: EvaluatedTable,
     recovery: boolean,
+    activationId = "",
+    rewriteRoute?: "automatic" | "cleanup" | "repair",
   ): Promise<SyncResult> {
     const result: SyncResult = {
       table_id: e.descriptor.table_id,
@@ -749,11 +1407,23 @@ export class Schema {
         }
         if (previous) {
           result.state = "migration_required";
-          await this.applyChange(
-            JSON.parse(previous.descriptor_json),
-            e.descriptor,
-            recovery,
-          );
+          if (rewriteRoute) {
+            const detail = await this.assertRewriteSafe(e.descriptor.table_id);
+            await this.evolve(
+              e,
+              detail,
+              activationId,
+              rewriteRoute,
+              this.repairs,
+            );
+            result.route = rewriteRoute;
+          } else {
+            await this.applyChange(
+              JSON.parse(previous.descriptor_json),
+              e.descriptor,
+              recovery,
+            );
+          }
         } else {
           const physical = await this.physicalColumns(e.descriptor.table_id);
           if (!physical.length) {
@@ -804,12 +1474,18 @@ export class Schema {
           ),
         );
         differences.push(
-          ...compareChecks(
-            this.backend,
-            e.descriptor,
-            await this.physicalChecks(e.descriptor.table_id),
-            retired,
-          ),
+          ...checkDifferences(this.backend, {
+            ...e.descriptor,
+            columns: [
+              ...e.descriptor.columns,
+              ...(await this.scan<CatalogColumn>(
+                "SELECT * FROM _8020_columns WHERE table_id = $1 ORDER BY ordinal",
+                [e.descriptor.table_id],
+              )).filter((c) => !active.has(c.column_name)).map((c) =>
+                JSON.parse(c.definition_json) as ColumnDescriptor
+              ),
+            ],
+          }, await this.physicalCheckDefinitions(e.descriptor.table_id)),
         );
         if (differences.length) throw new Error(differences.join("; "));
         result.state = "error";
@@ -817,41 +1493,54 @@ export class Schema {
       });
       result.state = "synchronized";
     } catch (error) {
+      if (this.transaction) {
+        if (
+          error instanceof MigrationFailure || error instanceof OperationFailure
+        ) throw error;
+        result.error = message(error);
+        throw new OperationFailure(result.error, [result]);
+      }
       result.error = message(error);
     }
     return result;
   }
-  async references(tables: EvaluatedTable[]): Promise<Map<string, string>> {
-    const rows = await this.scan<
-      { table_id: string; column_name: string; logical_type: string }
-    >(`SELECT c.table_id, c.column_name, c.logical_type FROM _8020_columns c JOIN _8020_tables t ON t.table_id = c.table_id WHERE c.state = 'active' AND t.state = 'active' ORDER BY c.table_id, c.column_name`);
-    // Candidate definitions replace the complete active column set for their table.
-    const candidates = new Set(tables.map((t) => t.descriptor.table_id));
-    const available = new Map(
-      rows.filter((c) => !candidates.has(c.table_id)).map((
-        c,
-      ) => [`${c.table_id}.${c.column_name}`, c.logical_type]),
+  async references(
+    tables: EvaluatedTable[],
+    retired: string[] = [],
+  ): Promise<Map<string, string>> {
+    const stored = await this.scan<{ descriptor_json: string }>(
+      "SELECT descriptor_json FROM _8020_tables WHERE state = 'active' ORDER BY table_id",
     );
-    for (const table of tables) {
-      for (const c of table.descriptor.columns) {
-        available.set(`${table.descriptor.table_id}.${c.name}`, c.logical_type);
-      }
+    const definitions = new Map<string, TableDescriptor>(stored.map((r) => {
+      const d = JSON.parse(r.descriptor_json) as TableDescriptor;
+      return [d.table_id, d];
+    }));
+    for (const e of tables) {
+      definitions.set(e.descriptor.table_id, e.descriptor);
     }
+    for (const id of retired ?? []) definitions.delete(id);
+    const available = new Map<string, string>(
+      [...definitions.values()].flatMap((d) =>
+        d.columns.map((c) =>
+          [`${d.table_id}.${c.name}`, c.logical_type] as const
+        )
+      ),
+    );
     const errors = new Map<string, string>();
-    for (const table of tables) {
-      for (const c of table.descriptor.columns) {
+    for (const d of definitions.values()) {
+      for (const c of d.columns) {
         if (!c.reference) continue;
         const target = `${c.reference.table}.${c.reference.column}`,
           type = available.get(target);
         if (!type) {
           errors.set(
-            table.descriptor.table_id,
-            `${table.descriptor.table_id}.${c.name} references missing column ${target}`,
+            d.table_id,
+            `${d.table_id}.${c.name} references missing column ${target}`,
           );
         } else if (type !== c.logical_type) {
           errors.set(
-            table.descriptor.table_id,
-            `${table.descriptor.table_id}.${c.name} type ${c.logical_type} does not match referenced ${target} type ${type}`,
+            d.table_id,
+            `${d.table_id}.${c.name} type ${c.logical_type} does not match referenced ${target} type ${type}`,
           );
         }
       }
@@ -904,13 +1593,209 @@ export class Schema {
     tables: EvaluatedTable[],
     options: SyncOptions,
   ): Promise<SyncResult[]> {
+    for (const e of tables) validateEvaluatedTable(e);
+    if (
+      new Set(tables.map((e) => e.descriptor.table_id)).size !== tables.length
+    ) throw new Error("duplicate canonical table ID");
+    const force = new Set(options.ForceColumns ?? []),
+      activationId = options.ActivationID ?? "";
+    if (force.size && !activationId) {
+      throw new Error("force requires an explicit candidate activation");
+    }
+    const pending = activationId ? await this.pending(activationId) : null;
+    if (activationId) {
+      if (
+        !pending ||
+        tables.some((e) =>
+          !pending.Candidates.some((c) =>
+            c.package_id === e.source_package &&
+            c.candidate_commit === e.source_commit
+          )
+        )
+      ) {
+        throw new Error(
+          "schema candidate identity differs from pending activation",
+        );
+      }
+    }
+    const receipts = pending?.Rewrites ?? {},
+      committed = Object.entries(receipts).filter(([id]) =>
+        id !== "_8020_catalog"
+      );
+    if (committed.length) {
+      // Consent describes the pre-commit plan; replay only the exact committed target.
+      return await this.atomic(async () => {
+        await this.lockTables(tables.map((e) => e.descriptor.table_id));
+        const status = await this.status();
+        if (status.catalog_version !== catalogVersion || status.catalog_error) {
+          throw new Error("database catalog is not ready");
+        }
+        const plan = await this.plan(tables);
+        if (
+          plan.tables.some((p) => p.previous_hash !== p.target_hash) ||
+          committed.some(([id, receipt]) =>
+            !plan.tables.some((p) =>
+              p.table_id === id && p.target_hash === receipt.hash
+            )
+          )
+        ) {
+          throw new Error(
+            "committed schema candidate or target changed; resume the original candidate",
+          );
+        }
+        await this.validateReferences();
+        return plan.tables.map(({ table_id }) => ({
+          table_id,
+          state: "synchronized",
+          route: receipts[table_id]?.route,
+        }));
+      });
+    }
+    let initial: SchemaPlan;
+    try {
+      initial = await this.plan(tables);
+    } catch (error) {
+      const reason = message(error);
+      throw new OperationFailure(
+        reason,
+        tables.map((e) => ({
+          table_id: e.descriptor.table_id,
+          state: "error",
+          error: reason,
+        })),
+      );
+    }
+    for (const scope of force) {
+      const split = scope.lastIndexOf("."),
+        id = scope.slice(0, split),
+        column = scope.slice(split + 1);
+      const item = initial.tables.find((p) => p.table_id === id);
+      if (
+        split < 0 || !validTable(id) ||
+        !item?.affected_columns.some((c) => c.name === column)
+      ) {
+        throw new Error(
+          `force requires an exact selected candidate table.column: ${scope}; no table reset is permitted`,
+        );
+      }
+    }
+    const routes = new Map<string, "automatic" | "cleanup" | "repair">();
+    for (const e of tables) {
+      const item = initial.tables.find((p) =>
+        p.table_id === e.descriptor.table_id
+      )!;
+      if (!item.previous_hash || item.previous_hash === item.target_hash) {
+        continue;
+      }
+      const detail = await this.inspect(e.descriptor.table_id);
+      const changed = detail.descriptor.columns.some((c) => {
+        const next = e.descriptor.columns.find((n) => n.name === c.name);
+        return !next || storage(c) !== storage(next);
+      }) ||
+        semantic(detail.descriptor.indexes) !==
+          semantic(e.descriptor.indexes) ||
+        migrationReasons(detail.descriptor, e.descriptor, this.backend).length >
+          0;
+      if (changed) {
+        routes.set(
+          item.table_id,
+          item.route === "automatic" ? "automatic" : "cleanup",
+        );
+      }
+      if (changed && item.route === "cleanup" && activationId) {
+        const module = await import(
+          new URL(
+            `file://${
+              e.source_module.split("/").map(encodeURIComponent).join("/")
+            }`,
+          ).href
+        );
+        if (typeof module.migrate !== "function") {
+          throw new Error(`${item.table_id}: migrate must be callable`);
+        }
+        this.migrations.set(item.table_id, module.migrate);
+      }
+    }
+    if (!routes.size && !options.ApprovedPlan) {
+      return await this.synchronizeTables(tables, options);
+    }
+    const repairing = new Set<string>();
+    while (true) {
+      try {
+        return await this.atomic(async () => {
+          await this.lockTables(tables.map((e) => e.descriptor.table_id));
+          const plan = await this.plan(tables);
+          if (options.ApprovedPlan && plan.identity !== options.ApprovedPlan) {
+            throw new Error(
+              "schema candidate or permitted damage changed; preview and confirm again",
+            );
+          }
+          const invalid = await this.references(tables, options.RetireTables);
+          if (invalid.size) throw new Error([...invalid.values()].join("\n"));
+          this.repairs = new Set(
+            [...force].filter((scope) =>
+              repairing.has(scope.slice(0, scope.lastIndexOf(".")))
+            ),
+          );
+          if (this.repairs.size) {
+            const incoming = await this.incomingReferences(tables);
+            for (const scope of this.repairs) {
+              if (incoming.get(scope)?.length) {
+                throw new Error(
+                  `${scope}: incoming references prevent automatic cell repair; author relationship-preserving cleanup`,
+                );
+              }
+            }
+          }
+          const execution = new Map(routes);
+          if (this.repairs.size) {
+            for (const scope of this.repairs) {
+              execution.set(scope.slice(0, scope.lastIndexOf(".")), "repair");
+            }
+          }
+          const results = await this.synchronizeTables(
+            tables,
+            options,
+            execution,
+          );
+          await this.validateReferences();
+          return results;
+        });
+      } catch (error) {
+        if (!(error instanceof MigrationFailure)) throw error;
+        if (repairing.has(error.table)) {
+          throw new OperationFailure(error.message, [{
+            table_id: error.table,
+            state: "migration_required",
+            error: error.message,
+          }]);
+        }
+        if (![...force].some((c) => c.startsWith(error.table + "."))) {
+          throw new OperationFailure(
+            `${error.message}. Old schema/data rolled back. Fix migrate cleanup or use exact --force table.column repair from the metadata preview.`,
+            [{
+              table_id: error.table,
+              state: "migration_required",
+              error: error.message,
+            }],
+          );
+        }
+        repairing.add(error.table);
+      }
+    }
+  }
+  private async synchronizeTables(
+    tables: EvaluatedTable[],
+    options: SyncOptions,
+    routes = new Map<string, "automatic" | "cleanup" | "repair">(),
+  ): Promise<SyncResult[]> {
     const status = await this.status();
     if (status.catalog_version !== catalogVersion || status.catalog_error) {
       throw new Error("database catalog is not ready");
     }
     const errors = options.SkipReferenceValidation
       ? new Map<string, string>()
-      : await this.references(tables);
+      : await this.references(tables, options.RetireTables);
     const seen = new Set<string>(), results: SyncResult[] = [];
     for (
       const table of [...tables].sort((a, b) =>
@@ -924,7 +1809,12 @@ export class Schema {
         results.push({ table_id: id, state: "error", error: errors.get(id) });
       } else {
         results.push(
-          await this.synchronizeTable(table, options.Recovery === true),
+          await this.synchronizeTable(
+            table,
+            options.Recovery === true,
+            options.ActivationID,
+            routes.get(id),
+          ),
         );
       }
     }
@@ -1017,18 +1907,22 @@ export class Schema {
       d.differences.push("stored table descriptor hash differs");
     }
     const active = new Map(
-      d.columns.filter((c) => c.state === "active").map(
+      d.columns.filter((c) =>
+        c.state === "active" ||
+        d.state === "retired" &&
+          d.descriptor.columns.some((n) => n.name === c.column_name)
+      ).map(
         (c) => [c.column_name, c],
       ),
     );
     for (const c of d.descriptor.columns) {
-      const found = active.get(c.name), encoded = JSON.stringify(c);
+      const found = active.get(c.name);
       if (!found) {
         d.differences.push(`logical catalog column ${c.name} is missing`);
       } else if (
         found.logical_type !== c.logical_type ||
-        found.definition_json !== encoded ||
-        found.definition_hash !== hash(encoded)
+        semantic(JSON.parse(found.definition_json)) !== semantic(c) ||
+        found.definition_hash !== hash(found.definition_json)
       ) d.differences.push(`logical catalog column ${c.name} differs`);
       active.delete(c.name);
     }
@@ -1045,7 +1939,11 @@ export class Schema {
         d.physical_indexes,
         retired,
       ),
-      ...compareChecks(this.backend, d.descriptor, d.physical_checks, retired),
+      ...checkDifferences(
+        this.backend,
+        await this.retainedDescriptor(d),
+        await this.physicalCheckDefinitions(id),
+      ),
     );
     for (const name of retired) {
       if (!d.physical_columns.some((c) => c.name === name)) {
@@ -1113,6 +2011,8 @@ export class Schema {
   ): Promise<unknown> {
     const id = String(input.id ?? "");
     switch (operation) {
+      case "evolutionCapability":
+        return 2;
       case "initialize":
         await this.initialize();
         return null;
@@ -1141,6 +2041,15 @@ export class Schema {
       case "completeDeployment":
         await this.completeDeployment(id, input.activated === true);
         return null;
+      case "rewrites": {
+        const receipts = await this.rewrites(id);
+        if (!input.outcome) return receipts;
+        return Object.fromEntries(
+          Object.entries(receipts).filter(([table]) =>
+            table !== "_8020_catalog"
+          ).map(([table, { rows: _rows, ...receipt }]) => [table, receipt]),
+        );
+      }
       case "pending":
         return await this.pending(id);
       case "updatePending":
@@ -1214,6 +2123,8 @@ export class Schema {
           input.tables as EvaluatedTable[] ?? [],
           input.options as SyncOptions ?? {},
         );
+      case "plan":
+        return await this.plan(input.tables as EvaluatedTable[] ?? []);
       case "finalize": {
         const ids = input.ids as string[] ?? [];
         if (
@@ -1331,6 +2242,7 @@ export default async function schema(
   );
   let value: unknown = null, error: string | undefined;
   try {
+    await requireSchemaEvolution();
     value = await store.run(request.operation, request.input ?? {});
   } catch (failure) {
     error = message(failure);

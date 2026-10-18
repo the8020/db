@@ -18,6 +18,11 @@ export {
   type TableOptions,
 } from "./src/descriptor.ts";
 export { db, transaction, type TransactionOptions } from "./src/runtime.ts";
+export type {
+  MigrationContext,
+  SchemaPlan,
+  TableMigration,
+} from "./migrations.ts";
 export {
   decimal,
   field,

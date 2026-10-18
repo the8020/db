@@ -42,10 +42,80 @@ const JoinCustomers = table("the8020__example__customers", {
   id: t.text().primaryKey(),
 });
 
+Deno.test("nested transaction predicates use their source table codecs", async () => {
+  const { schemaTransaction } = await import("./runtime.ts");
+  const previous = descriptorOf(table("the8020__example__codec_migration", {
+    id: t.integer().primaryKey(),
+    total: t.decimal(12, 2),
+  }));
+  const next = structuredClone(previous);
+  next.columns[1]!.logical_type = "text";
+  delete next.columns[1]!.precision;
+  delete next.columns[1]!.scale;
+  const tx = schemaTransaction(
+    "sqlite",
+    "schema-transaction",
+    new Map([
+      [previous.table_id, previous],
+      ["cleanup_notes", next],
+    ]),
+  );
+  const globals = globalThis as unknown as Record<symbol, unknown>;
+  const original = globals[kernelInvokeSymbol];
+  let parameters: unknown;
+  globals[kernelInvokeSymbol] = (
+    operation: string,
+    input: Record<string, unknown>,
+  ) => {
+    assertEquals(operation, "database.execute");
+    assertEquals(input.transaction, "schema-transaction");
+    parameters = input.parameters;
+    return Promise.resolve({ columns: [], rows: [] });
+  };
+  try {
+    await tx.insertInto("cleanup_notes").columns(["id", "total"])
+      .expression(
+        tx.selectFrom(previous.table_id).select(["id", "total"])
+          .where("total", "=", "1.23"),
+      ).execute();
+    assertEquals(parameters, [{ type: "bigint", value: "123" }]);
+  } finally {
+    await tx.destroy();
+    globals[kernelInvokeSymbol] = original;
+  }
+});
+
 declare module "/p/the8020/db/types.ts" {
   interface Database extends TableDatabase<typeof TransactionOrders> {}
   interface Database extends TableDatabase<typeof JoinCustomers> {}
 }
+
+Deno.test("upsert update assignments use the target table's logical codecs", async () => {
+  const Settings = table("the8020__example__upsert_codecs", {
+    id: t.text().primaryKey(),
+    value: t.json<{ domains: string[] }>(),
+    total: t.decimal(12, 2),
+  });
+  calls.length = 0;
+  await Settings.insert({
+    id: "https",
+    value: { domains: ["*"] },
+    total: "1.23",
+  })
+    .onConflict((conflict) =>
+      conflict.column("id").doUpdateSet({
+        value: { domains: ["example.test"] },
+        total: "4.56",
+      })
+    ).execute();
+  assertEquals(calls.at(-1)?.input.parameters, [
+    "https",
+    { type: "json", value: { domains: ["*"] } },
+    { type: "bigint", value: "123" },
+    { type: "json", value: { domains: ["example.test"] } },
+    { type: "bigint", value: "456" },
+  ]);
+});
 
 Deno.test("table descriptor preserves logical schema and composite keys", () => {
   const audit = columns({

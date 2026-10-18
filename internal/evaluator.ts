@@ -19,6 +19,7 @@ export interface EvaluatedTable {
   source_package: string;
   source_commit: string;
   dependencies: string[];
+  has_migrate?: boolean;
 }
 
 const maximumBatch = 256;
@@ -46,7 +47,11 @@ export default async function evaluate(
     ) throw new TypeError("invalid table evaluation item");
     const module = await import(pathToFileURL(item.module).href) as {
       default?: unknown;
+      migrate?: unknown;
     };
+    if (module.migrate !== undefined && typeof module.migrate !== "function") {
+      throw new TypeError(`${item.module}: migrate must be a function`);
+    }
     const descriptor = descriptorOf(module.default);
     if (descriptor.table_id !== item.expected_table_id) {
       throw new TypeError(
@@ -61,6 +66,7 @@ export default async function evaluate(
       source_module: item.module,
       source_package: item.package_id,
       source_commit: item.package_commit,
+      has_migrate: typeof module.migrate === "function",
       dependencies: [...new Set([item.module, ...(item.dependencies ?? [])])]
         .sort(),
     });

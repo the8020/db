@@ -1,6 +1,6 @@
 /** Bootstrap metadata owned by db; it does not depend on its own table evaluator. */
 import type { Backend } from "./ddl.ts";
-export const catalogVersion = 2;
+export const catalogVersion = 3;
 export function catalogStatements(backend: Backend): string[] {
   const integer = backend === "sqlite" ? "INTEGER" : "bigint";
   const table = (name: string, columns: string) =>
@@ -39,6 +39,11 @@ export function catalogStatements(backend: Backend): string[] {
       previous_package_set_json TEXT NOT NULL, candidate_package_set_hash TEXT NOT NULL, candidate_package_set_json TEXT NOT NULL,
       candidates_json TEXT NOT NULL, stage TEXT NOT NULL, error TEXT NOT NULL, started_at TEXT NOT NULL, updated_at TEXT NOT NULL`,
     ),
+    table(
+      "_8020_schema_rewrites",
+      `deployment_id TEXT NOT NULL, table_id TEXT NOT NULL, target_hash TEXT NOT NULL,
+      route TEXT NOT NULL, row_count ${integer} NOT NULL, columns_json TEXT NOT NULL DEFAULT '[]', PRIMARY KEY (deployment_id, table_id)`,
+    ),
   ];
 }
 export const catalogChecks = [
@@ -47,4 +52,5 @@ export const catalogChecks = [
   "SELECT table_id, column_name, ordinal, logical_type, definition_hash, definition_json, state FROM _8020_columns WHERE 1 = 0",
   "SELECT table_id, module_path FROM _8020_dependencies WHERE 1 = 0",
   "SELECT deployment_id, previous_package_set_hash, previous_package_set_json, candidate_package_set_hash, candidate_package_set_json, candidates_json, stage, error, started_at, updated_at FROM _8020_pending_deployment WHERE 1 = 0",
+  "SELECT deployment_id, table_id, target_hash, route, row_count, columns_json FROM _8020_schema_rewrites WHERE 1 = 0",
 ];
