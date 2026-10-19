@@ -245,9 +245,8 @@ below.
   transaction; unsupported conversion/repair stops without guessing or erasure.
   Keep a migration while its supported previous schemas remain supported.
   Changing function code alone does not rerun it.
-- `deno.json` contains deployed runtime mappings. Package-local checks and tests
-  override them with `deno.local.json` as an import map so sibling source
-  repositories resolve locally without replacing compiler options.
+- `deno.json` owns package dependencies and tasks. Run checks inside an 80|20
+  Deno workspace, which supplies platform imports.
 - Flat `cbus/commands/*.toml` declarations use a required `command` field for
   the complete public name; filenames are arbitrary. They map visible `db.*` and
   `db.tables.*` commands to non-discoverable ordinary programs whose default
