@@ -1,6 +1,7 @@
 // @deno-types="./vendor/zod.ts"
 import { z } from "./vendor/zod.js";
 import type { JSONValue, LogicalType } from "./src/schema.ts";
+import { type FieldMultiple, validMultiple } from "./multiple.ts";
 import {
   assertDecimal,
   assertDecimalDefinition,
@@ -8,6 +9,13 @@ import {
 } from "./src/values.ts";
 
 export { z };
+export {
+  escapeMultiple,
+  type FieldMultiple,
+  joinMultiple,
+  multipleLiteral,
+  splitMultiple,
+} from "./multiple.ts";
 
 interface StorageValues {
   text: string;
@@ -66,11 +74,17 @@ export interface ValueHelpPage {
   totalSourceItems?: number;
 }
 
+/** How a field holds several values, if it does. */
+export type MultipleValues =
+  | { kind: "array"; element: z.ZodType }
+  | { kind: "text"; separator: string; escape: string };
+
 /** Meaning shared by forms, lists, and other consumers of a Zod field. */
 export interface FieldMetadata<Value = unknown> {
   storage?: FieldStorage<Value>;
   label?: string;
   description?: string;
+  multiple?: FieldMultiple;
   valueHelp?(
     request: ValueHelpRequest,
   ): ValueHelpPage | Promise<ValueHelpPage>;
@@ -88,6 +102,7 @@ export function field<T extends z.ZodType>(
   options: FieldMetadata<z.output<T>>,
 ): T {
   const inherited = fieldMetadata(schema);
+  if (options.multiple !== undefined) validMultiple(options.multiple);
   const storage = options.storage ?? inherited?.storage;
   if (
     inherited?.storage !== undefined && options.storage !== undefined &&
@@ -136,6 +151,31 @@ export function fieldMetadata<T extends z.ZodType>(
     }
   }
   return result;
+}
+
+/**
+ * An array of scalar values, or a text field declaring `multiple`. Other
+ * fields hold one value.
+ */
+export function multipleValues(schema: z.ZodType): MultipleValues | undefined {
+  const inner = fieldSchemas(schema).at(-1)!;
+  if (inner instanceof z.ZodArray) {
+    const element = inner.element as z.ZodType;
+    const value = fieldSchemas(element).at(-1)!;
+    return value instanceof z.ZodString || value instanceof z.ZodNumber ||
+        value instanceof z.ZodEnum
+      ? { kind: "array", element }
+      : undefined;
+  }
+  const declared = fieldMetadata(schema)?.multiple;
+  if (declared === undefined || !(inner instanceof z.ZodString)) {
+    return undefined;
+  }
+  return {
+    kind: "text",
+    separator: declared.separator,
+    escape: declared.escape ?? "",
+  };
 }
 
 /** Search and page known choices without restricting the field's valid values. */

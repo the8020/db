@@ -196,6 +196,15 @@ below.
   and sort before bounded paging; return the matching count. Other field types
   require their provider's query implementation. Do not load whole database
   tables to filter or sort lookup results.
+- Several values: arrays of scalar values hold them by schema
+  (`multipleValues()` reports `{ kind: "array", element }`); a text field
+  declares `multiple: { separator, escape? }` (one non-space character, not
+  backslash). Backslash escapes the separator, itself and each `escape`
+  character, which keep a meaning in the field's own grammar. `multiple.ts`
+  holds the dependency-free `splitMultiple` (values as written, trimmed, blanks
+  dropped), `joinMultiple`, `escapeMultiple` (a literal as written) and
+  `multipleLiteral` (the literal, or undefined for grammar such as ranges);
+  `fields.ts` re-exports them, and the browser shell imports `multiple.ts`.
 - `choiceHelp(schema, items)` in `fields.ts` builds a paged provider for known
   scalar values or value/name pairs. It lazily reuses UUI's ordinary list query
   implementation, performs no query on import, and adds no field validation or

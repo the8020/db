@@ -190,3 +190,45 @@ Deno.test("ordinary Zod structures preserve fields through includes and wrappers
     { label: "Name", description: "Full name." },
   );
 });
+
+Deno.test("multiple values come from arrays of scalars or declared text", async () => {
+  const {
+    escapeMultiple,
+    field,
+    joinMultiple,
+    multipleLiteral,
+    multipleValues,
+    splitMultiple,
+    z,
+  } = await import("./fields.ts");
+  assertEquals(multipleValues(z.array(z.string()).max(3))?.kind, "array");
+  assertEquals(multipleValues(z.array(z.object({ a: z.string() }))), undefined);
+  assertEquals(multipleValues(z.string()), undefined);
+  const grammar = { separator: ",", escape: "-*?!<>" };
+  const values = field(z.string().optional(), {
+    label: "Allowed values",
+    multiple: grammar,
+  });
+  assertEquals(multipleValues(values), {
+    kind: "text",
+    separator: ",",
+    escape: "-*?!<>",
+  });
+  assertThrows(() => field(z.string(), { multiple: { separator: "\\" } }));
+  assertThrows(() => field(z.string(), { multiple: { separator: " " } }));
+
+  // Written values keep their escapes and grammar; spaces and blanks go.
+  const written = splitMultiple(" SK , CZ,,7500-7599, !7522 ,a\\,b ", grammar);
+  assertEquals(written, ["SK", "CZ", "7500-7599", "!7522", "a\\,b"]);
+  assertEquals(joinMultiple(written, grammar), "SK,CZ,7500-7599,!7522,a\\,b");
+  assertEquals(
+    written.map((value) => multipleLiteral(value, grammar)),
+    ["SK", "CZ", undefined, undefined, "a,b"],
+  );
+  // A selected literal is escaped so the grammar never reinterprets it.
+  for (const literal of ["10-20", "a,b", "*", "x\\y", " lead"]) {
+    const escaped = escapeMultiple(literal, grammar);
+    assertEquals(splitMultiple(escaped, grammar), [escaped]);
+    assertEquals(multipleLiteral(escaped, grammar), literal);
+  }
+});
